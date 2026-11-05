@@ -140,7 +140,7 @@ const std::vector<GpuPreset>& gpuPresets() {
 
 const std::vector<ModelInfo>& modelCatalog() {
     // name, category, kind, params(B), active(B), fixed memory (GB), CPU fallback
-    static const std::vector<ModelInfo> c = {
+    static std::vector<ModelInfo> c = {
         // Small LLMs
         {"Qwen2.5 0.5B",              "LLM small (<=4B)", K_LLM, 0.5, 0.5, 0, true},
         {"Gemma 3 1B",                "LLM small (<=4B)", K_LLM, 1.0, 1.0, 0, true},
@@ -224,7 +224,62 @@ const std::vector<ModelInfo>& modelCatalog() {
         // Embeddings
         {"nomic-embed-text",          "Embedding", K_EMBED, 0.14, 0, 1, true},
         {"bge-m3",                    "Embedding", K_EMBED, 0.57, 0, 2, true},
+        // Added: more engines (Grok, Kimi, GLM, MiniMax, DeepSeek distills, Mistral, IBM, AI2...)
+        {"SmolLM3 3B",                "LLM small (<=4B)", K_LLM, 3.1, 3.1, 0, true},
+        {"Gemma 3n E4B",              "LLM small (<=4B)", K_LLM, 6.9, 4.0, 0, true},
+        {"DeepSeek-R1-Distill 7B",    "LLM medium (7-14B)", K_LLM, 7.6, 7.6, 0, true},
+        {"OLMo 2 7B",                 "LLM medium (7-14B)", K_LLM, 7.3, 7.3, 0, true},
+        {"Granite 3.3 8B",            "LLM medium (7-14B)", K_LLM, 8.2, 8.2, 0, true},
+        {"Falcon 3 10B",              "LLM medium (7-14B)", K_LLM, 10.0, 10.0, 0, true},
+        {"OLMo 2 13B",                "LLM medium (7-14B)", K_LLM, 13.7, 13.7, 0, true},
+        {"DeepSeek-R1-Distill 14B",   "LLM medium (7-14B)", K_LLM, 14.8, 14.8, 0, true},
+        {"Phi-4 reasoning 14B",       "LLM medium (7-14B)", K_LLM, 14.7, 14.7, 0, true},
+        {"Mistral Small 3.1 24B",     "LLM large (24-35B)", K_LLM, 24.0, 24.0, 0, true},
+        {"Magistral Small 24B",       "LLM large (24-35B)", K_LLM, 23.6, 23.6, 0, true},
+        {"Yi 1.5 34B",                "LLM large (24-35B)", K_LLM, 34.4, 34.4, 0, true},
+        {"DeepSeek-R1-Distill 70B",   "LLM huge (70B+)", K_LLM, 70.6, 70.6, 0, true},
+        {"Llama 3.1 Nemotron 70B",    "LLM huge (70B+)", K_LLM, 70.6, 70.6, 0, true},
+        {"Command A 111B",            "LLM huge (70B+)", K_LLM, 111, 111, 0, true},
+        {"Grok-1 314B (MoE)",         "LLM MoE", K_LLM, 314, 86, 0, true},
+        {"Grok-2 270B (MoE)",         "LLM MoE", K_LLM, 270, 115, 0, true},
+        {"GLM-4.5 Air 106B (MoE)",    "LLM MoE", K_LLM, 106, 12, 0, true},
+        {"DBRX 132B (MoE)",           "LLM MoE", K_LLM, 132, 36, 0, true},
+        {"MiniMax-M2 230B (MoE)",     "LLM MoE", K_LLM, 230, 10, 0, true},
+        {"GLM-4.5 355B (MoE)",        "LLM MoE", K_LLM, 355, 32, 0, true},
+        {"Kimi K2 1T (MoE)",          "LLM MoE", K_LLM, 1000, 32, 0, true},
+        {"Devstral Small 24B",        "LLM coding", K_LLM, 23.6, 23.6, 0, true},
+        {"Qwen3-Coder 30B-A3B (MoE)", "LLM coding", K_LLM, 30.5, 3.3, 0, true},
+        {"Qwen3-Coder 480B-A35B (MoE)", "LLM coding", K_LLM, 480, 35, 0, true},
+        {"MiniCPM-V 2.6 8B",          "LLM vision", K_LLM, 8.1, 8.1, 0, true},
+        {"Pixtral 12B",               "LLM vision", K_LLM, 12.4, 12.4, 0, true},
+        {"Gemma 3 27B Vision",        "LLM vision", K_LLM, 27.4, 27.4, 0, true},
+        {"PixArt-Sigma",              "Image", K_IMAGE, 0.6, 0, 8, false},
+        {"Kolors",                    "Image", K_IMAGE, 2.6, 0, 12, false},
+        {"HiDream-I1 (fp8)",          "Image", K_IMAGE, 17, 0, 20, false},
+        {"Qwen-Image 20B (fp8)",      "Image", K_IMAGE, 20, 0, 24, false},
+        {"LTX-Video 2B",              "Video", K_VIDEO, 2, 0, 10, false},
+        {"Mochi 1",                   "Video", K_VIDEO, 10, 0, 24, false},
+        {"Kokoro TTS 82M",            "Audio", K_AUDIO, 0.08, 0, 1, true},
+        {"Piper TTS",                 "Audio", K_AUDIO, 0.06, 0, 1, true},
+        {"Parakeet TDT 0.6B",         "Audio", K_AUDIO, 0.6, 0, 3, true},
+        {"Bark (voice + effects)",    "Audio", K_AUDIO, 1.0, 0, 6, true},
+        {"F5-TTS (voice cloning)",    "Audio", K_AUDIO, 0.34, 0, 4, true},
+        {"Stable Audio Open",         "Audio", K_AUDIO, 1.2, 0, 8, false},
+        {"all-MiniLM-L6-v2",          "Embedding", K_EMBED, 0.02, 0, 1, true},
+        {"Qwen3-Embedding 8B",        "Embedding", K_EMBED, 8, 0, 9, true},
     };
+    // Keep categories in first-seen order, models inside by size.
+    std::vector<std::string> order;
+    for (const auto& m : c)
+        if (std::find(order.begin(), order.end(), m.category) == order.end()) order.push_back(m.category);
+    auto rank = [&](const ModelInfo& m) {
+        return std::find(order.begin(), order.end(), m.category) - order.begin();
+    };
+    std::stable_sort(c.begin(), c.end(), [&](const ModelInfo& a, const ModelInfo& b) {
+        if (rank(a) != rank(b)) return rank(a) < rank(b);
+        double sa = a.kind == K_LLM ? a.paramsB : a.fixedGB, sb = b.kind == K_LLM ? b.paramsB : b.fixedGB;
+        return sa < sb;
+    });
     return c;
 }
 
@@ -247,7 +302,10 @@ std::string capabilities(const ModelInfo& m) {
         case K_EMBED: return "Search, RAG";
         case K_AUDIO:
             if (has("whisper")) return "Speech to text";
-            if (has("xtts")) return "Voice, Cloning";
+            if (has("xtts") || has("f5-tts")) return "Voice, Cloning";
+            if (has("tts") || has("piper") || has("bark")) return "Voice (text to speech)";
+            if (has("parakeet")) return "Speech to text";
+            if (has("stable audio")) return "Music, Sound";
             if (has("musicgen")) return "Music";
             return "Audio";
         default: break;
@@ -256,7 +314,8 @@ std::string capabilities(const ModelInfo& m) {
     if (c == "LLM vision") return "Text, Image input";
     std::string t = "Text";
     if (c != "LLM small (<=4B)") t += ", Code";
-    if (has("r1") || has("qwen3") || has("gpt-oss") || has("phi-4")) t += ", Reasoning";
+    if (has("r1") || has("qwen3") || has("gpt-oss") || has("phi-4") || has("glm") ||
+        has("magistral") || has("minimax") || has("kimi") || has("grok") || has("reasoning")) t += ", Reasoning";
     if (c == "LLM huge (70B+)" || c == "LLM MoE") t += ", Agents";
     return t;
 }

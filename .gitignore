@@ -3,3 +3,4 @@ obj/
 *.exe
 *.layout
 *.depend
+app_res.o

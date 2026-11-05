@@ -594,13 +594,17 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show) {
     INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_LISTVIEW_CLASSES};
     InitCommonControlsEx(&icc);
 
-    WNDCLASSA wc = {};
+    WNDCLASSEXA wc = {};
+    wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = wndProc;
     wc.hInstance = inst;
+    wc.hIcon = LoadIcon(inst, MAKEINTRESOURCE(1));
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = "HardwareAIWnd";
-    RegisterClassA(&wc);
+    wc.hIconSm = (HICON)LoadImage(inst, MAKEINTRESOURCE(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                  GetSystemMetrics(SM_CYSMICON), 0);
+    RegisterClassExA(&wc);
 
     HWND w = CreateWindowA(wc.lpszClassName, "Hardware-AI - what AI can my PC run?",
                            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 920, 820, nullptr,

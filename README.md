@@ -4,7 +4,7 @@ Win32 GUI (C++17, no external libraries) that detects your hardware and estimate
 
 ## Features
 - Auto-detects CPU (name, cores/threads, AVX/AVX2/AVX-512), RAM (size, module speed and estimated bandwidth from SMBIOS) and GPU(s) with dedicated VRAM (DXGI).
-- Catalog of ~80 models in ordered categories: small / medium / large / huge LLMs, MoE LLMs (gpt-oss, Qwen3, Mixtral, Llama 4, DeepSeek), coding, vision, image (SD, SDXL, SD3.5, Flux), video (Wan, CogVideoX, Hunyuan), speech (Whisper, XTTS) and embeddings.
+- Catalog of ~125 models (incl. Grok, Kimi K2, GLM, MiniMax, DeepSeek, Qwen3, Llama 4, Mistral...) in ordered categories: small / medium / large / huge LLMs, MoE LLMs (gpt-oss, Qwen3, Mixtral, Llama 4, DeepSeek), coding, vision, image (SD, SDXL, SD3.5, Flux), video (Wan, CogVideoX, Hunyuan), speech (Whisper, XTTS) and embeddings.
 - Rows are colored Smooth / Usable / Slow / Cannot run, with mode (GPU, GPU+CPU, CPU) and estimated tokens/s. Click column headers to sort; filter by category; hide "Cannot run".
 - Quantization (Q4/Q5/Q8/FP16) and context length (2K-128K, KV cache) change the memory needed.
 - Click any model: minimum hardware to run it smoothly, the cheapest RAM/VRAM upgrade from your hardware, and suggested software/backend.
@@ -20,4 +20,5 @@ Open `Hardware-AI.cbp`, select Release, press Build & Run. Use a 64-bit MinGW (e
 
 Command line:
 
-    g++ -std=c++17 -O2 -mwindows -static -o Hardware-AI.exe src/*.cpp -lcomctl32 -lcomdlg32 -ldwmapi
+    windres res/app.rc -O coff -o app_res.o
+    g++ -std=c++17 -O2 -mwindows -static -o Hardware-AI.exe src/*.cpp app_res.o -lcomctl32 -lcomdlg32 -ldwmapi

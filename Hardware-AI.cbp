@@ -44,5 +44,8 @@
 		<Unit filename="src/hardware.cpp" />
 		<Unit filename="src/hardware.h" />
 		<Unit filename="src/main.cpp" />
+		<Unit filename="res/app.rc">
+			<Option compilerVar="WINDRES" />
+		</Unit>
 	</Project>
 </CodeBlocks_project_file>
