@@ -39,6 +39,7 @@
 			<Add library="comdlg32" />
 			<Add library="dwmapi" />
 			<Add library="urlmon" />
+			<Add library="avrt" />
 		</Linker>
 		<Unit filename="src/advisor.cpp" />
 		<Unit filename="src/i18n.cpp" />
