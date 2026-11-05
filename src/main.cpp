@@ -4,6 +4,9 @@
 #include <dwmapi.h>
 
 #include <algorithm>
+#include <cmath>
+#include <map>
+#include <set>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -21,7 +24,9 @@ enum {
     ID_QUANT, ID_CTX, ID_CATF, ID_HIDE, ID_DARK,
     ID_LIST, ID_SUMMARY, ID_REC,
     ID_GRP_HW, ID_GRP_WHATIF, ID_GRP_OPT,
-    ID_L1, ID_L2, ID_L3, ID_L4, ID_L5, ID_L6, ID_L7, ID_L8
+    ID_L1, ID_L2, ID_L3, ID_L4, ID_L5, ID_L6, ID_L7, ID_L8,
+    ID_BENCH, ID_SAVEPROF, ID_LOADPROF, ID_COPYCMD, ID_ALLGPU, ID_FAVONLY, ID_CMP, ID_CMPPRESET,
+    ID_CMPRAM, ID_L9
 };
 
 static HINSTANCE g_inst;
@@ -32,6 +37,12 @@ static const COLORREF DARK_BG = RGB(32, 32, 32), DARK_EDIT = RGB(45, 45, 45),
                       DARK_TEXT = RGB(235, 235, 235);
 static HWND g_edCores, g_edRam, g_edRamBw, g_edVram;
 static HWND g_cbPreset, g_cbQuant, g_cbCtx, g_cbCat;
+static HWND g_allGpu, g_favOnly, g_cmp, g_cbCmp, g_edCmpRam;
+static std::vector<Verdict> g_verdB;   // verdicts for the compare setup
+static std::set<std::string> g_fav;    // favorite model names
+static double g_measuredBw = 0;        // RAM bandwidth from the benchmark, GB/s
+static double g_diskFree = 0;
+static int g_customAdded = 0;
 static HwInfo g_hw;
 static Spec g_spec;
 static std::vector<std::string> g_cats;
@@ -57,10 +68,21 @@ static Spec specFromDetected() {
     s.avx2 = g_hw.avx2;
     s.ramGB = g_hw.ramGB;
     s.ramBw = g_hw.ramBwGBs;
+    if (g_measuredBw > 0) {
+        s.ramBw = g_measuredBw;
+        s.ramMeasured = true;
+    }
+    s.diskFreeGB = g_diskFree;
     int g = g_hw.bestGpu();
     if (g >= 0) {
         s.vramGB = g_hw.gpus[g].vramGB;
         s.gpuName = g_hw.gpus[g].name;
+        if (g_allGpu && SendMessage(g_allGpu, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+            double sum = 0;
+            for (const auto& gi : g_hw.gpus)
+                if (gi.vramGB >= 1.0) sum += gi.vramGB;  // skip integrated GPUs
+            s.vramGB = std::max(s.vramGB, sum);
+        }
     }
     return s;
 }
@@ -75,9 +97,15 @@ static std::string hardwareText() {
         t += fmt("   %d modules @ %d MT/s  (~%.0f GB/s)", g_hw.ramModules, g_hw.ramSpeedMTs,
                  g_hw.ramBwGBs);
     t += "\r\n";
+    if (g_measuredBw > 0) t += fmt("      measured read bandwidth: %.1f GB/s\r\n", g_measuredBw);
     if (g_hw.gpus.empty()) t += "GPU:  none detected\r\n";
-    for (const auto& g : g_hw.gpus)
+    int dedicated = 0;
+    for (const auto& g : g_hw.gpus) {
         t += fmt("GPU:  %s   VRAM %.1f GB (shared %.1f GB)\r\n", g.name.c_str(), g.vramGB, g.sharedGB);
+        if (g.vramGB >= 1.0) ++dedicated;
+    }
+    if (dedicated > 1) t += fmt("      %d GPUs with VRAM: combined %.1f GB\r\n", dedicated, specFromDetected().vramGB);
+    if (g_diskFree > 0) t += fmt("Disk: %.0f GB free for downloads\r\n", g_diskFree);
     return t;
 }
 
@@ -85,6 +113,18 @@ static std::string paramsText(const ModelInfo& m) {
     if (m.paramsB <= 0) return "-";
     if (m.paramsB < 1) return fmt("%.2g B", m.paramsB);
     return fmt("%.4g B", m.paramsB);
+}
+
+static int g_scalePct = 100;
+static HFONT g_font = nullptr;
+static int S(int v) { return MulDiv(v, g_scalePct, 100); }
+
+static std::string exeDir() {
+    char p[MAX_PATH] = {0};
+    GetModuleFileNameA(nullptr, p, MAX_PATH);
+    std::string d = p;
+    size_t k = d.find_last_of("\\/");
+    return k == std::string::npos ? std::string() : d.substr(0, k);
 }
 
 static void setEditNum(HWND h, double v) {
@@ -145,6 +185,12 @@ static void sortView() {
                 int c = g_verd[a].mode.compare(g_verd[b].mode);
                 return g_sortAsc ? c < 0 : c > 0;
             }
+            case 8: x = g_verd[a].diskGB; y = g_verd[b].diskGB; break;
+            case 9:
+                if (g_verdB.size() != cat.size()) return false;
+                x = g_verdB[a].level * 1000 + g_verdB[a].tps;
+                y = g_verdB[b].level * 1000 + g_verdB[b].tps;
+                break;
             default: x = g_verd[a].tps; y = g_verd[b].tps; break;
         }
         return g_sortAsc ? x < y : x > y;
@@ -156,8 +202,37 @@ static void refreshRecommendation() {
     if (g_sel < 0 || g_sel >= (int)cat.size())
         SetWindowTextA(g_rec, "Click a model in the list to see the minimum hardware needed to run it smoothly.");
     else
-        SetWindowTextA(g_rec, recommend(cat[g_sel], g_spec).c_str());
+    {
+        std::string t = recommend(cat[g_sel], g_spec);
+        if (cat[g_sel].kind == K_LLM && evaluate(cat[g_sel], g_spec).mode != "-")
+            t += "\r\nSuggested llama.cpp command (button \"Copy run command\" copies it):\r\n" +
+                 runCommand(cat[g_sel], g_spec);
+        SetWindowTextA(g_rec, t.c_str());
+    }
 }
+
+static Spec specB() {
+    Spec b = g_spec;
+    b.ramGB = std::max(1.0, [&] {
+        char t[64];
+        GetWindowTextA(g_edCmpRam, t, sizeof t);
+        return atof(t);
+    }());
+    b.ramBw = 0;
+    b.ramMeasured = false;
+    int p = (int)SendMessage(g_cbCmp, CB_GETCURSEL, 0, 0);
+    b.vramOverridden = false;
+    if (p <= 0) {
+        b.vramGB = 0;
+        b.gpuName.clear();
+    } else {
+        b.vramGB = gpuPresets()[p - 1].vramGB;
+        b.gpuName = gpuPresets()[p - 1].name;
+    }
+    return b;
+}
+
+static bool isFav(const char* name) { return g_fav.count(name) > 0; }
 
 static void refreshList() {
     const auto& cat = modelCatalog();
@@ -172,12 +247,22 @@ static void refreshList() {
             best = (int)i;
     }
 
+    const bool cmp = SendMessage(g_cmp, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    g_verdB.assign(cat.size(), Verdict());
+    if (cmp) {
+        Spec sb = specB();
+        for (size_t i = 0; i < cat.size(); ++i) g_verdB[i] = evaluate(cat[i], sb);
+    }
+    ListView_SetColumnWidth(g_list, 9, cmp ? S(150) : 0);
+
     int cf = (int)SendMessage(g_cbCat, CB_GETCURSEL, 0, 0);
     bool hide = SendMessage(g_hide, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    bool favOnly = SendMessage(g_favOnly, BM_GETCHECK, 0, 0) == BST_CHECKED;
     g_view.clear();
     for (size_t i = 0; i < cat.size(); ++i) {
         if (cf > 0 && g_cats[cf - 1] != cat[i].category) continue;
         if (hide && g_verd[i].level == LV_NO) continue;
+        if (favOnly && !isFav(cat[i].name)) continue;
         g_view.push_back((int)i);
     }
     sortView();
@@ -191,7 +276,8 @@ static void refreshList() {
         LVITEMA it = {};
         it.mask = LVIF_TEXT;
         it.iItem = (int)r;
-        it.pszText = (char*)cat[i].name;
+        std::string nm = (isFav(cat[i].name) ? "* " : "") + std::string(cat[i].name);
+        it.pszText = (char*)nm.c_str();
         SendMessageA(g_list, LVM_INSERTITEMA, 0, (LPARAM)&it);
         auto set = [&](int col, const std::string& s) {
             LVITEMA sub = {};
@@ -206,6 +292,11 @@ static void refreshList() {
         set(5, levelText(v.level));
         set(6, v.mode);
         set(7, v.tps > 0 ? fmt("%.1f", v.tps) : std::string("-"));
+        set(8, fmt("%.1f GB", v.diskGB));
+        if (cmp) {
+            const Verdict& vb = g_verdB[i];
+            set(9, std::string(levelText(vb.level)) + (vb.tps > 0 ? fmt("  %.1f tok/s", vb.tps) : ""));
+        }
         if (i == g_sel) {
             ListView_SetItemState(g_list, (int)r, LVIS_SELECTED | LVIS_FOCUSED,
                                   LVIS_SELECTED | LVIS_FOCUSED);
@@ -220,6 +311,7 @@ static void refreshList() {
                           cnt[LV_SLOW], cnt[LV_NO]);
     if (best >= 0)
         sum += fmt("   |   Best smooth LLM: %s (%.1f tok/s)", cat[best].name, g_verd[best].tps);
+    if (g_customAdded > 0) sum += fmt("   |   +%d custom models", g_customAdded);
     SetWindowTextA(g_summary, sum.c_str());
 }
 
@@ -243,6 +335,8 @@ static void applyWhatIf() {
     g_spec.cores = (int)std::max(1.0, readNum(g_edCores, d.cores));
     g_spec.ramGB = readNum(g_edRam, d.ramGB);
     g_spec.ramBw = readNum(g_edRamBw, 0);
+    g_spec.ramMeasured = g_measuredBw > 0 && std::lround(g_spec.ramBw) == std::lround(g_measuredBw);
+    if (g_spec.ramMeasured) g_spec.ramBw = g_measuredBw;
     g_spec.vramGB = readNum(g_edVram, d.vramGB);
 
     int p = (int)SendMessage(g_cbPreset, CB_GETCURSEL, 0, 0);
@@ -268,9 +362,151 @@ static void onPresetChanged() {
     applyWhatIf();
 }
 
+static void copyToClipboard(const std::string& text) {
+    if (!OpenClipboard(g_hwnd)) return;
+    EmptyClipboard();
+    HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1);
+    if (h) {
+        std::memcpy(GlobalLock(h), text.c_str(), text.size() + 1);
+        GlobalUnlock(h);
+        SetClipboardData(CF_TEXT, h);
+    }
+    CloseClipboard();
+}
+
+static const char* REG_KEY = "Software\\Hardware-AI";
+
+static void saveFavorites() {
+    std::string v;
+    for (const auto& n : g_fav) v += n + "|";
+    HKEY k;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, REG_KEY, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k,
+                        nullptr) == ERROR_SUCCESS) {
+        RegSetValueExA(k, "Favorites", 0, REG_SZ, (const BYTE*)v.c_str(), (DWORD)v.size() + 1);
+        RegCloseKey(k);
+    }
+}
+
+static void loadFavorites() {
+    HKEY k;
+    char buf[16384] = {0};
+    DWORD sz = sizeof buf - 1, type = 0;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, REG_KEY, 0, KEY_QUERY_VALUE, &k) != ERROR_SUCCESS) return;
+    if (RegQueryValueExA(k, "Favorites", nullptr, &type, (BYTE*)buf, &sz) == ERROR_SUCCESS &&
+        type == REG_SZ) {
+        std::string all = buf, cur;
+        for (char c : all) {
+            if (c == '|') {
+                if (!cur.empty()) g_fav.insert(cur);
+                cur.clear();
+            } else {
+                cur += c;
+            }
+        }
+    }
+    RegCloseKey(k);
+}
+
+static void runBenchmark() {
+    SetCursor(LoadCursor(nullptr, IDC_WAIT));
+    double bw = benchmarkRamBandwidth(std::max(2, g_hw.physicalCores));
+    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+    if (bw <= 0) {
+        MessageBoxA(g_hwnd, "The benchmark could not run (not enough free memory?).", "Hardware-AI",
+                    MB_ICONWARNING);
+        return;
+    }
+    g_measuredBw = bw;
+    g_spec.ramBw = bw;
+    g_spec.ramMeasured = true;
+    setEditNum(g_edRamBw, bw);
+    SetWindowTextA(g_hwText, hardwareText().c_str());
+    refreshAll();
+}
+
+static void copyRunCommand() {
+    const auto& cat = modelCatalog();
+    if (g_sel < 0 || g_sel >= (int)cat.size()) {
+        MessageBoxA(g_hwnd, "Select a model in the list first.", "Hardware-AI", MB_ICONINFORMATION);
+        return;
+    }
+    std::string cmd = runCommand(cat[g_sel], g_spec);
+    while (!cmd.empty() && (cmd.back() == '\r' || cmd.back() == '\n')) cmd.pop_back();
+    copyToClipboard(cmd);
+    MessageBoxA(g_hwnd, ("Copied to clipboard:\n\n" + cmd).c_str(), "Hardware-AI", MB_ICONINFORMATION);
+}
+
+static void saveProfile() {
+    char path[MAX_PATH] = "my-pc.hwai";
+    OPENFILENAMEA ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_hwnd;
+    ofn.lpstrFilter = "Hardware-AI profile (*.hwai)\0*.hwai\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = "hwai";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    if (!GetSaveFileNameA(&ofn)) return;
+    std::ofstream f(path);
+    if (!f) {
+        MessageBoxA(g_hwnd, "Cannot write the file.", "Hardware-AI", MB_ICONERROR);
+        return;
+    }
+    f << "cores=" << g_spec.cores << "\nram=" << g_spec.ramGB << "\nrambw=" << g_spec.ramBw
+      << "\nvram=" << g_spec.vramGB << "\ngpu=" << g_spec.gpuName
+      << "\noverridden=" << (g_spec.vramOverridden ? 1 : 0) << "\navx2=" << (g_spec.avx2 ? 1 : 0)
+      << "\nquant=" << g_spec.quant << "\nctx=" << g_spec.ctx << "\n";
+}
+
+static void loadProfile() {
+    char path[MAX_PATH] = "";
+    OPENFILENAMEA ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_hwnd;
+    ofn.lpstrFilter = "Hardware-AI profile (*.hwai)\0*.hwai\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!GetOpenFileNameA(&ofn)) return;
+    std::ifstream f(path);
+    std::map<std::string, std::string> kv;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t e = line.find('=');
+        if (e != std::string::npos) kv[line.substr(0, e)] = line.substr(e + 1);
+    }
+    if (!kv.count("cores") || !kv.count("ram")) {
+        MessageBoxA(g_hwnd, "This is not a valid profile file.", "Hardware-AI", MB_ICONWARNING);
+        return;
+    }
+    auto num = [&](const char* k, double d) { return kv.count(k) ? atof(kv[k].c_str()) : d; };
+    g_spec.cores = (int)std::max(1.0, num("cores", g_spec.cores));
+    g_spec.ramGB = std::max(0.0, num("ram", g_spec.ramGB));
+    g_spec.ramBw = std::max(0.0, num("rambw", 0));
+    g_spec.ramMeasured = false;
+    g_spec.vramGB = std::max(0.0, num("vram", 0));
+    g_spec.gpuName = kv.count("gpu") ? kv["gpu"] : "";
+    g_spec.vramOverridden = num("overridden", 0) != 0;
+    g_spec.avx2 = num("avx2", 1) != 0;
+    int q = (int)num("quant", 0), c = (int)num("ctx", 4096);
+    q = std::max(0, std::min((int)quants().size() - 1, q));
+
+    fillInputs();
+    int preset = g_spec.vramGB <= 0 ? 1 : 0;
+    for (size_t i = 0; i < gpuPresets().size(); ++i)
+        if (g_spec.gpuName == gpuPresets()[i].name) preset = (int)i + 2;
+    SendMessage(g_cbPreset, CB_SETCURSEL, preset, 0);
+    SendMessage(g_cbQuant, CB_SETCURSEL, q, 0);
+    for (size_t i = 0; i < contextSizes().size(); ++i)
+        if (contextSizes()[i] == c) SendMessage(g_cbCtx, CB_SETCURSEL, i, 0);
+    refreshAll();
+}
+
 static void detectAndShow() {
     SetCursor(LoadCursor(nullptr, IDC_WAIT));
     g_hw = detectHardware();
+    g_diskFree = freeDiskGB(exeDir());
     g_spec = specFromDetected();
     SetWindowTextA(g_hwText, hardwareText().c_str());
     fillInputs();
@@ -320,9 +556,6 @@ static void place(int id, int x, int y, int w, int h) {
 }
 
 // Everything is laid out for an 8pt font and multiplied by the font scale.
-static int g_scalePct = 100;
-static HFONT g_font = nullptr;
-static int S(int v) { return MulDiv(v, g_scalePct, 100); }
 
 static void initFont() {
     const int pt = 10;  // UI font size in points
@@ -339,11 +572,13 @@ static void layout(int w, int h) {
     const int m = S(10);
     const int ctlH = S(24), lblH = S(20);
     int y = m;
-    place(ID_GRP_HW, m, y, w - 2 * m, S(104));
-    place(ID_HWTEXT, m + S(8), y + S(20), w - 2 * m - S(140), S(80));
-    place(ID_REDETECT, w - m - S(120), y + S(22), S(112), S(28));
-    place(ID_EXPORT, w - m - S(120), y + S(58), S(112), S(28));
-    y += S(110);
+    place(ID_GRP_HW, m, y, w - 2 * m, S(128));
+    place(ID_HWTEXT, m + S(8), y + S(20), w - 2 * m - S(290), S(104));
+    const int bx2 = w - m - S(122), bx1 = bx2 - S(122), bw = S(114), bh = S(28);
+    place(ID_REDETECT, bx1, y + S(22), bw, bh);   place(ID_SAVEPROF, bx2, y + S(22), bw, bh);
+    place(ID_BENCH, bx1, y + S(56), bw, bh);      place(ID_LOADPROF, bx2, y + S(56), bw, bh);
+    place(ID_EXPORT, bx1, y + S(90), bw, bh);     place(ID_COPYCMD, bx2, y + S(90), bw, bh);
+    y += S(134);
 
     place(ID_GRP_WHATIF, m, y, w - 2 * m, S(92));
     int x = m + S(10), cy = y + S(22);
@@ -357,11 +592,12 @@ static void layout(int w, int h) {
     x = m + S(10);
     cy += S(32);
     place(ID_L5, x, cy + S(2), S(76), lblH);        place(ID_GPUPRESET, x + S(78), cy, S(270), S(300));
-    place(ID_APPLY, x + S(372), cy - S(1), S(76), S(26));
-    place(ID_RESET, x + S(456), cy - S(1), S(140), S(26));
+    place(ID_APPLY, x + S(362), cy - S(1), S(70), S(26));
+    place(ID_RESET, x + S(438), cy - S(1), S(140), S(26));
+    place(ID_ALLGPU, x + S(588), cy, S(150), ctlH);
     y += S(98);
 
-    place(ID_GRP_OPT, m, y, w - 2 * m, S(58));
+    place(ID_GRP_OPT, m, y, w - 2 * m, S(92));
     x = m + S(10);
     cy = y + S(22);
     place(ID_L6, x, cy + S(2), S(48), lblH);        place(ID_QUANT, x + S(50), cy, S(130), S(200));
@@ -372,9 +608,16 @@ static void layout(int w, int h) {
     x += S(262);
     place(ID_HIDE, x, cy, S(140), ctlH);
     place(ID_DARK, x + S(146), cy, S(100), ctlH);
-    y += S(66);
+    x = m + S(10);
+    cy += S(32);
+    place(ID_FAVONLY, x, cy, S(150), ctlH);
+    place(ID_CMP, x + S(160), cy, S(130), ctlH);
+    place(ID_CMPPRESET, x + S(294), cy, S(240), S(300));
+    place(ID_L9, x + S(546), cy + S(2), S(66), lblH);
+    place(ID_CMPRAM, x + S(616), cy, S(58), ctlH);
+    y += S(98);
 
-    const int recH = S(190);
+    const int recH = S(170);
     int listH = std::max(S(100), h - y - recH - S(30) - 2 * m);
     MoveWindow(g_list, m, y, w - 2 * m, listH, TRUE);
     y += listH + S(4);
@@ -388,6 +631,10 @@ static void createControls() {
     g_hwText = mk("STATIC", "", 0, ID_HWTEXT);
     mk("BUTTON", "Re-detect", BS_PUSHBUTTON | WS_TABSTOP, ID_REDETECT);
     mk("BUTTON", "Export report...", BS_PUSHBUTTON | WS_TABSTOP, ID_EXPORT);
+    mk("BUTTON", "Benchmark RAM", BS_PUSHBUTTON | WS_TABSTOP, ID_BENCH);
+    mk("BUTTON", "Save profile...", BS_PUSHBUTTON | WS_TABSTOP, ID_SAVEPROF);
+    mk("BUTTON", "Load profile...", BS_PUSHBUTTON | WS_TABSTOP, ID_LOADPROF);
+    mk("BUTTON", "Copy run command", BS_PUSHBUTTON | WS_TABSTOP, ID_COPYCMD);
 
     mk("BUTTON", " What-if hardware (edit to test upgrades, blank RAM GB/s = estimate) ",
        BS_GROUPBOX, ID_GRP_WHATIF);
@@ -409,6 +656,8 @@ static void createControls() {
     SendMessage(g_cbPreset, CB_SETCURSEL, 0, 0);
     mk("BUTTON", "Apply", BS_DEFPUSHBUTTON | WS_TABSTOP, ID_APPLY);
     mk("BUTTON", "Reset to detected", BS_PUSHBUTTON | WS_TABSTOP, ID_RESET);
+    g_allGpu = mk("BUTTON", "Sum all GPUs", BS_AUTOCHECKBOX | WS_TABSTOP, ID_ALLGPU);
+    SendMessage(g_allGpu, BM_SETCHECK, BST_CHECKED, 0);
 
     mk("BUTTON", " Options ", BS_GROUPBOX, ID_GRP_OPT);
     mk("STATIC", "Quant:", 0, ID_L6);
@@ -430,14 +679,27 @@ static void createControls() {
     SendMessage(g_cbCat, CB_SETCURSEL, 0, 0);
     g_hide = mk("BUTTON", "Hide \"Cannot run\"", BS_AUTOCHECKBOX | WS_TABSTOP, ID_HIDE);
     g_dark = mk("BUTTON", "Dark mode", BS_AUTOCHECKBOX | WS_TABSTOP, ID_DARK);
+    g_favOnly = mk("BUTTON", "Favorites only", BS_AUTOCHECKBOX | WS_TABSTOP, ID_FAVONLY);
+    g_cmp = mk("BUTTON", "Compare with:", BS_AUTOCHECKBOX | WS_TABSTOP, ID_CMP);
+    g_cbCmp = mk("COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, ID_CMPPRESET);
+    SendMessageA(g_cbCmp, CB_ADDSTRING, 0, (LPARAM) "No GPU (CPU only)");
+    int cmpDefault = 0, idx = 1;
+    for (const auto& g : gpuPresets()) {
+        SendMessageA(g_cbCmp, CB_ADDSTRING, 0, (LPARAM)fmt("%s - %.0f GB", g.name, g.vramGB).c_str());
+        if (std::string(g.name) == "RTX 4090") cmpDefault = idx;
+        ++idx;
+    }
+    SendMessage(g_cbCmp, CB_SETCURSEL, cmpDefault, 0);
+    mk("STATIC", "RAM (GB):", 0, ID_L9);
+    g_edCmpRam = mk("EDIT", "64", ES_AUTOHSCROLL | WS_TABSTOP, ID_CMPRAM, WS_EX_CLIENTEDGE);
 
     g_list = mk(WC_LISTVIEWA, "", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_TABSTOP,
                 ID_LIST, WS_EX_CLIENTEDGE);
     ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
     const char* cols[] = {"AI engine / model", "Category", "Can do", "Params", "Memory needed",
-                          "Result", "Mode", "Est. tokens/s"};
-    const int widths[] = {S(190), S(120), S(150), S(62), S(100), S(80), S(68), S(92)};
-    for (int i = 0; i < 8; ++i) {
+                          "Result", "Mode", "Est. tokens/s", "Download", "Compare"};
+    const int widths[] = {S(190), S(110), S(140), S(62), S(100), S(80), S(68), S(92), S(84), 0};
+    for (int i = 0; i < 10; ++i) {
         LVCOLUMNA c = {};
         c.mask = LVCF_TEXT | LVCF_WIDTH;
         c.pszText = (char*)cols[i];
@@ -526,8 +788,17 @@ static LRESULT onNotify(LPARAM lp) {
     } else if (h->code == LVN_COLUMNCLICK) {
         int col = ((NMLISTVIEW*)lp)->iSubItem;
         if (col == g_sortCol) g_sortAsc = !g_sortAsc;
-        else { g_sortCol = col; g_sortAsc = (col != 5 && col != 7); }
+        else { g_sortCol = col; g_sortAsc = (col != 5 && col != 7 && col != 9); }
         refreshList();
+    } else if (h->code == NM_DBLCLK) {
+        int r = ((NMITEMACTIVATE*)lp)->iItem;
+        if (r >= 0 && r < (int)g_view.size()) {
+            const char* name = modelCatalog()[g_view[r]].name;
+            g_sel = g_view[r];
+            if (!g_fav.erase(name)) g_fav.insert(name);
+            saveFavorites();
+            refreshList();
+        }
     } else if (h->code == NM_CUSTOMDRAW) {
         NMLVCUSTOMDRAW* cd = (NMLVCUSTOMDRAW*)lp;
         if (cd->nmcd.dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
@@ -547,6 +818,16 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE:
             g_hwnd = hwnd;
+            loadFavorites();
+            {
+                // models.csv next to the exe, or up to three folders above it (Code::Blocks bin/Release)
+                std::string d = exeDir();
+                for (int up = 0; up < 4 && !d.empty(); ++up) {
+                    g_customAdded += loadCustomModels(d + "\\models.csv");
+                    size_t k = d.find_last_of("\\/");
+                    d = k == std::string::npos ? std::string() : d.substr(0, k);
+                }
+            }
             initFont();
             createControls();
             detectAndShow();
@@ -560,7 +841,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RECT wa;
             SystemParametersInfo(SPI_GETWORKAREA, 0, &wa, 0);
             mi->ptMinTrackSize.x = std::min<LONG>(S(900) + 20, wa.right - wa.left);
-            mi->ptMinTrackSize.y = std::min<LONG>(S(540) + 40, wa.bottom - wa.top);
+            mi->ptMinTrackSize.y = std::min<LONG>(S(640) + 40, wa.bottom - wa.top);
             return 0;
         }
         case WM_CTLCOLORSTATIC:
@@ -586,6 +867,24 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     refreshAll();
                     break;
                 case ID_REDETECT: detectAndShow(); break;
+                case ID_BENCH: runBenchmark(); break;
+                case ID_SAVEPROF: saveProfile(); break;
+                case ID_LOADPROF: loadProfile(); break;
+                case ID_COPYCMD: copyRunCommand(); break;
+                case ID_ALLGPU:
+                    g_spec = specFromDetected();
+                    fillInputs();
+                    SetWindowTextA(g_hwText, hardwareText().c_str());
+                    refreshAll();
+                    break;
+                case ID_FAVONLY:
+                case ID_CMP: refreshAll(); break;
+                case ID_CMPPRESET:
+                    if (HIWORD(wp) == CBN_SELCHANGE) refreshAll();
+                    break;
+                case ID_CMPRAM:
+                    if (HIWORD(wp) == EN_CHANGE) refreshAll();
+                    break;
                 case ID_EXPORT: exportReport(); break;
                 case ID_HIDE: refreshAll(); break;
                 case ID_DARK:
@@ -635,7 +934,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show) {
         g_scalePct = MulDiv(100, 10 * dpi, 8 * 96);  // same value initFont() computes
     }
     int ww = std::min<int>(S(940) + 20, wa.right - wa.left);
-    int wh = std::min<int>(S(660) + 40, wa.bottom - wa.top);
+    int wh = std::min<int>(S(780) + 40, wa.bottom - wa.top);
     HWND w = CreateWindowA(wc.lpszClassName, "Hardware-AI - what AI can my PC run?",
                            WS_OVERLAPPEDWINDOW, wa.left + (wa.right - wa.left - ww) / 2,
                            wa.top + (wa.bottom - wa.top - wh) / 2, ww, wh, nullptr,

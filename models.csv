@@ -1,0 +1,7 @@
+# Custom models: name,category,kind,paramsB,activeB,fixedGB,cpuOk
+# kind = llm | image | video | audio | embed
+# For llm: set paramsB (billions) and activeB (= paramsB unless MoE); fixedGB = 0.
+# For non-llm: set fixedGB (VRAM/RAM needed); cpuOk = 1 if it can run on CPU.
+# Example (remove the leading # to enable):
+# My-Llama-3.3-70B,Chat,llm,70,70,0,1
+# My-Image-Model,Image,image,0,0,12,0

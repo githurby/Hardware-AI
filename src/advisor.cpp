@@ -4,6 +4,10 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <deque>
+#include <fstream>
+#include <sstream>
 
 namespace {
 
@@ -93,6 +97,46 @@ std::string softwareHint(const ModelInfo& m, const Spec& s) {
     return t + " with " + backendHint(s);
 }
 
+
+void sortCatalog(std::vector<ModelInfo>& c) {
+    // Categories keep first-seen order, models inside a category go by size.
+    std::vector<std::string> order;
+    for (const auto& m : c)
+        if (std::find(order.begin(), order.end(), m.category) == order.end()) order.push_back(m.category);
+    auto rank = [&](const ModelInfo& m) {
+        return std::find(order.begin(), order.end(), m.category) - order.begin();
+    };
+    std::stable_sort(c.begin(), c.end(), [&](const ModelInfo& a, const ModelInfo& b) {
+        if (rank(a) != rank(b)) return rank(a) < rank(b);
+        double sa = a.kind == K_LLM ? a.paramsB : a.fixedGB, sb = b.kind == K_LLM ? b.paramsB : b.fixedGB;
+        return sa < sb;
+    });
+}
+
+std::vector<ModelInfo>& catalogStorage();
+
+
+struct Tier { double gb; double usd; int psuW; };
+// Rough street prices (USD, new or used mix) and suggested PSU wattage per VRAM tier.
+const Tier GPU_TIERS[] = {
+    {4, 120, 450}, {6, 160, 450}, {8, 280, 550}, {10, 350, 650}, {12, 400, 650},
+    {16, 550, 750}, {20, 800, 800}, {24, 1000, 850}, {32, 2200, 1000}, {48, 3500, 1000},
+    {64, 5500, 1300}, {80, 8000, 1600}, {96, 8500, 1600}, {128, 11000, 2000},
+    {192, 20000, 2400}, {256, 30000, 3000},
+};
+const double RAM_USD_PER_GB = 5.0;
+
+const Tier* tierFor(double gb) {
+    for (const auto& t : GPU_TIERS)
+        if (gb <= t.gb) return &t;
+    return &GPU_TIERS[sizeof(GPU_TIERS) / sizeof(GPU_TIERS[0]) - 1];
+}
+
+// Fraction of the model's layers that fit in VRAM when it is split between GPU and CPU.
+double gpuFraction(const Spec& s, double need) {
+    return std::min(1.0, std::max(0.0, (s.vramGB - 0.8) / std::max(0.1, need - 0.6)));
+}
+
 std::string fmt(const char* f, double a = 0, double b = 0, double c = 0) {
     char buf[512];
     snprintf(buf, sizeof buf, f, a, b, c);
@@ -138,7 +182,8 @@ const std::vector<GpuPreset>& gpuPresets() {
     return g;
 }
 
-const std::vector<ModelInfo>& modelCatalog() {
+namespace {
+std::vector<ModelInfo>& catalogStorage() {
     // name, category, kind, params(B), active(B), fixed memory (GB), CPU fallback
     static std::vector<ModelInfo> c = {
         // Small LLMs
@@ -268,20 +313,12 @@ const std::vector<ModelInfo>& modelCatalog() {
         {"all-MiniLM-L6-v2",          "Embedding", K_EMBED, 0.02, 0, 1, true},
         {"Qwen3-Embedding 8B",        "Embedding", K_EMBED, 8, 0, 9, true},
     };
-    // Keep categories in first-seen order, models inside by size.
-    std::vector<std::string> order;
-    for (const auto& m : c)
-        if (std::find(order.begin(), order.end(), m.category) == order.end()) order.push_back(m.category);
-    auto rank = [&](const ModelInfo& m) {
-        return std::find(order.begin(), order.end(), m.category) - order.begin();
-    };
-    std::stable_sort(c.begin(), c.end(), [&](const ModelInfo& a, const ModelInfo& b) {
-        if (rank(a) != rank(b)) return rank(a) < rank(b);
-        double sa = a.kind == K_LLM ? a.paramsB : a.fixedGB, sb = b.kind == K_LLM ? b.paramsB : b.fixedGB;
-        return sa < sb;
-    });
+    sortCatalog(c);
     return c;
 }
+}  // namespace
+
+const std::vector<ModelInfo>& modelCatalog() { return catalogStorage(); }
 
 const char* kindText(Kind k) {
     switch (k) {
@@ -331,6 +368,8 @@ double estimateGpuBandwidth(const Spec& s) {
 
 double estimateCpuBandwidth(const Spec& s) {
     double bw;
+    if (s.ramMeasured && s.ramBw > 0)
+        return s.ramBw;
     if (s.ramBw > 0)
         bw = std::min(s.ramBw, std::max(15.0, s.cores * 9.0));  // few cores cannot saturate RAM
     else
@@ -374,7 +413,7 @@ Verdict evaluate(const ModelInfo& m, const Spec& s) {
     }
 
     const double read = readPerToken(m, s);
-    const double cpuBw = estimateCpuBandwidth(s) * EFFICIENCY;
+    const double cpuBw = estimateCpuBandwidth(s) * (s.ramMeasured ? 1.0 : EFFICIENCY);
 
     if (s.vramGB > 0 && v.needGB <= s.vramGB) {
         v.mode = "GPU";
@@ -383,7 +422,7 @@ Verdict evaluate(const ModelInfo& m, const Spec& s) {
         return v;
     }
     if (s.vramGB >= 2.0 && v.needGB <= s.vramGB + freeRam) {
-        double f = std::min(1.0, std::max(0.0, (s.vramGB - 0.8) / (v.needGB - 0.6)));
+        double f = gpuFraction(s, v.needGB);
         double t = f * read / gpuBw + (1.0 - f) * read / cpuBw;
         v.mode = "GPU+CPU";
         v.tps = 1.0 / t;
@@ -411,6 +450,12 @@ std::string recommend(const ModelInfo& m, const Spec& s) {
     else
         out += fmt("Memory needed: about %.0f GB (typical default precision)\r\n", need);
 
+    if (s.diskFreeGB > 0) {
+        out += fmt("Download size: about %.1f GB; free disk space: %.0f GB", v.diskGB, s.diskFreeGB);
+        out += v.diskGB * 1.1 > s.diskFreeGB ? " - NOT ENOUGH, free some space first!\r\n" : " - OK\r\n";
+    } else {
+        out += fmt("Download size: about %.1f GB\r\n", v.diskGB);
+    }
     out += fmt("Your selection: %.0f CPU cores, %.0f GB RAM, ", s.cores, s.ramGB) +
            fmt("%.0f GB VRAM", s.vramGB) + "\r\n";
     out += std::string("Result: ") + levelText(v.level) + " (" + v.mode + ")";
@@ -457,8 +502,11 @@ std::string recommend(const ModelInfo& m, const Spec& s) {
         u.vramGB = t;
         u.vramOverridden = true;
         if (evaluate(m, u).level == LV_SMOOTH) {
+            const Tier* tr = tierFor(t);
             out += fmt("  GPU: upgrade to %.0f GB VRAM", t) +
                    fmt(" (~%.0f GB/s class)", estimateGpuBandwidth(u)) + " - " + gpuTier(t) + "\r\n";
+            out += fmt("       budget: ~$%.0f (rough), power supply of at least %.0f W", tr->usd,
+                       (double)tr->psuW) + ", check case space and cooling\r\n";
             any = true;
             break;
         }
@@ -468,7 +516,8 @@ std::string recommend(const ModelInfo& m, const Spec& s) {
         Spec u = s;
         u.ramGB = t;
         if (evaluate(m, u).level == LV_SMOOTH) {
-            out += fmt("  RAM: upgrade to %.0f GB\r\n", t);
+            out += fmt("  RAM: upgrade to %.0f GB", t) +
+                   fmt(" (add %.0f GB, budget ~$%.0f rough)\r\n", t - s.ramGB, (t - s.ramGB) * RAM_USD_PER_GB);
             any = true;
             break;
         }
@@ -478,4 +527,67 @@ std::string recommend(const ModelInfo& m, const Spec& s) {
     out += "\r\nSoftware: " + softwareHint(m, s) + "\r\n";
     out += "Estimates are approximate; real speed depends on engine, quantisation and context.\r\n";
     return out;
+}
+
+int loadCustomModels(const std::string& path) {
+    static std::deque<std::string> store;  // keeps the strings the catalog points to
+    std::ifstream f(path);
+    if (!f) return 0;
+    auto& cat = catalogStorage();
+    int added = 0;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        std::vector<std::string> p;
+        std::stringstream ss(line);
+        std::string cell;
+        while (std::getline(ss, cell, ',')) {
+            size_t a = cell.find_first_not_of(" \t"), b = cell.find_last_not_of(" \t");
+            p.push_back(a == std::string::npos ? "" : cell.substr(a, b - a + 1));
+        }
+        if (p.size() < 7 || p[0].empty() || lower(p[0]) == "name") continue;
+        std::string k = lower(p[2]);
+        Kind kind = k == "llm" ? K_LLM : k == "image" ? K_IMAGE : k == "video" ? K_VIDEO
+                  : k == "audio" ? K_AUDIO : k == "embed" ? K_EMBED : (Kind)-1;
+        if ((int)kind < 0) continue;
+        double params = atof(p[3].c_str()), active = atof(p[4].c_str()), fixed = atof(p[5].c_str());
+        if (kind == K_LLM && params <= 0) continue;
+        if (kind != K_LLM && fixed <= 0) continue;
+        if (active <= 0 || active > params) active = params;
+        bool dup = false;
+        for (const auto& m : cat) dup = dup || lower(m.name) == lower(p[0]);
+        if (dup) continue;
+        store.push_back(p[0]);
+        const char* name = store.back().c_str();
+        store.push_back(p[1].empty() ? "Custom" : p[1]);
+        const char* category = store.back().c_str();
+        cat.push_back({name, category, kind, params, active, fixed, p[6] == "1" || lower(p[6]) == "true"});
+        ++added;
+    }
+    if (added) sortCatalog(cat);
+    return added;
+}
+
+std::string runCommand(const ModelInfo& m, const Spec& s) {
+    if (m.kind != K_LLM)
+        return std::string("# ") + m.name + ": run it with " + softwareHint(m, s) + "\r\n";
+    Verdict v = evaluate(m, s);
+    if (v.mode == "-") return std::string("# ") + m.name + " does not fit this hardware.\r\n";
+
+    const int layers = (int)std::lround(12.0 * std::pow(std::max(0.5, m.paramsB), 0.36) + 8.0);
+    int ngl = 0;
+    if (v.mode == "GPU") ngl = 99;
+    else if (v.mode == "GPU+CPU") ngl = (int)std::floor(gpuFraction(s, v.needGB) * layers);
+
+    std::string q = quantOf(s).name;
+    q = q.substr(0, q.find(' '));
+    std::string cmd = std::string("llama-server -m \"") + m.name + "-" + q + ".gguf\"";
+    cmd += " -c " + std::to_string(s.ctx) + " -t " + std::to_string(std::max(1, s.cores));
+    if (v.mode == "GPU+CPU" && m.activeB < m.paramsB * 0.6)
+        cmd += " -ngl 99 -ot \".ffn_.*_exps.=CPU\"";  // MoE: keep attention on GPU, experts in RAM
+    else
+        cmd += " -ngl " + std::to_string(ngl);
+    if (s.vramGB > 0 && v.mode != "CPU") cmd += " -fa";
+    return cmd + "\r\n";
 }

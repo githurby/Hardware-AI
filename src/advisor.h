@@ -15,6 +15,8 @@ struct Spec {
     bool vramOverridden = false;  // true: VRAM differs from the named GPU, estimate bandwidth
     int quant = 0;           // index into quants()
     int ctx = 4096;          // context length in tokens
+    bool ramMeasured = false;  // ramBw comes from a real benchmark (no efficiency factor)
+    double diskFreeGB = 0;   // free disk space for downloads, 0 = unknown
 };
 
 enum Kind { K_LLM, K_IMAGE, K_VIDEO, K_AUDIO, K_EMBED };
@@ -67,5 +69,12 @@ std::string capabilities(const ModelInfo& m);
 // Explains what hardware model m needs to run smoothly and the cheapest upgrade
 // from spec s, plus suggested software.
 std::string recommend(const ModelInfo& m, const Spec& s);
+
+// Loads extra models from a CSV file (name,category,kind,paramsB,activeB,fixedGB,cpuOk;
+// kind = llm|image|video|audio|embed). Returns how many models were added.
+int loadCustomModels(const std::string& path);
+
+// A ready-to-paste llama.cpp command with suggested GPU layers, threads and context.
+std::string runCommand(const ModelInfo& m, const Spec& s);
 
 #endif

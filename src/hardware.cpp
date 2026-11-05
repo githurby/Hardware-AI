@@ -143,3 +143,79 @@ HwInfo detectHardware() {
     detectGpus(hw);
     return hw;
 }
+
+namespace {
+struct BenchJob {
+    const unsigned long long* data;
+    size_t count;
+    HANDLE start;
+    unsigned long long sink;
+};
+
+DWORD WINAPI benchThread(LPVOID p) {
+    BenchJob* j = (BenchJob*)p;
+    WaitForSingleObject(j->start, INFINITE);
+    unsigned long long a = 0, b = 0, c = 0, d = 0;
+    for (int pass = 0; pass < 4; ++pass) {
+        for (size_t i = 0; i + 4 <= j->count; i += 4) {
+            a += j->data[i];
+            b += j->data[i + 1];
+            c += j->data[i + 2];
+            d += j->data[i + 3];
+        }
+    }
+    j->sink = a + b + c + d;
+    return 0;
+}
+}  // namespace
+
+double benchmarkRamBandwidth(int threads) {
+    threads = std::max(1, std::min(threads, 32));
+    MEMORYSTATUSEX ms;
+    ms.dwLength = sizeof(ms);
+    GlobalMemoryStatusEx(&ms);
+    size_t totalBytes = (size_t)(ms.ullAvailPhys / 4);
+    totalBytes = std::min<size_t>(totalBytes, (size_t)768 << 20);  // 768 MB at most
+    totalBytes = std::max<size_t>(totalBytes, (size_t)64 << 20);
+    size_t perThread = (totalBytes / threads) & ~(size_t)63;
+
+    unsigned long long* buf = (unsigned long long*)VirtualAlloc(
+        nullptr, perThread * threads, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!buf) return 0;
+    const size_t perCount = perThread / 8;
+    for (size_t i = 0; i < perCount * threads; ++i) buf[i] = i;  // touch pages
+
+    HANDLE start = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+    std::vector<BenchJob> jobs(threads);
+    std::vector<HANDLE> th(threads);
+    for (int t = 0; t < threads; ++t) {
+        jobs[t] = {buf + (size_t)t * perCount, perCount, start, 0};
+        th[t] = CreateThread(nullptr, 0, benchThread, &jobs[t], 0, nullptr);
+    }
+    LARGE_INTEGER f, t0, t1;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&t0);
+    SetEvent(start);
+    WaitForMultipleObjects(threads, th.data(), TRUE, 20000);
+    QueryPerformanceCounter(&t1);
+
+    unsigned long long sink = 0;
+    for (int t = 0; t < threads; ++t) {
+        sink += jobs[t].sink;
+        CloseHandle(th[t]);
+    }
+    CloseHandle(start);
+    VirtualFree(buf, 0, MEM_RELEASE);
+    if (sink == 1) return 0;  // keeps the reads from being optimised away
+
+    double secs = (double)(t1.QuadPart - t0.QuadPart) / (double)f.QuadPart;
+    double bytes = 4.0 * perCount * 8.0 * threads;
+    return secs > 0 ? bytes / secs / 1e9 : 0;
+}
+
+double freeDiskGB(const std::string& folder) {
+    ULARGE_INTEGER freeBytes;
+    if (!GetDiskFreeSpaceExA(folder.empty() ? nullptr : folder.c_str(), &freeBytes, nullptr, nullptr))
+        return 0;
+    return (double)freeBytes.QuadPart / (1024.0 * 1024.0 * 1024.0);
+}

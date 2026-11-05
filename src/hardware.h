@@ -27,4 +27,10 @@ struct HwInfo {
 
 HwInfo detectHardware();
 
+// Measures real memory read bandwidth in GB/s using the given number of threads (takes ~1-2 s).
+double benchmarkRamBandwidth(int threads);
+
+// Free space in GB on the drive of the given folder (current drive when empty), 0 if unknown.
+double freeDiskGB(const std::string& folder);
+
 #endif

@@ -22,3 +22,14 @@ Command line:
 
     windres res/app.rc -O coff -o app_res.o
     g++ -std=c++17 -O2 -mwindows -static -o Hardware-AI.exe src/*.cpp app_res.o -lcomctl32 -lcomdlg32 -ldwmapi
+
+## Extra features
+- **Benchmark RAM**: measures real memory bandwidth (more accurate speed estimates).
+- **Sum all GPUs**: combines VRAM of multiple GPUs.
+- **Disk check**: warns when the model download exceeds free disk space; "Download" column.
+- **models.csv**: add your own models (see the sample file; searched next to the exe and up to 3 folders above).
+- **Compare with**: second hardware column to compare against a GPU/RAM combo.
+- **Upgrade advisor**: rough cost, PSU and cooling notes (estimates only).
+- **Favorites**: double-click a row to star it; "Favorites only" filter (saved in registry).
+- **Copy run command**: llama.cpp `llama-server` command for the selected LLM.
+- **Profiles**: save/load hardware setups as `.hwai` files.
