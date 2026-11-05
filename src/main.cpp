@@ -98,6 +98,8 @@ static void refreshRecommendation() {
 
 static void refreshAll() {
     refreshList();
+    int sel = (int)SendMessage(g_combo, CB_GETCURSEL, 0, 0);
+    if (sel >= 0) ListView_SetItemState(g_list, sel, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
     refreshRecommendation();
 }
 
@@ -199,7 +201,7 @@ static void createControls() {
         SendMessageA(g_list, LVM_INSERTCOLUMNA, i, (LPARAM)&c);
     }
 
-    mk("STATIC", "Recommend hardware for (optional):", 0, ID_LBL_TARGET);
+    mk("STATIC", "Minimum hardware for (click a row):", 0, ID_LBL_TARGET);
     g_combo = mk("COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, ID_COMBO);
     for (const auto& m : modelCatalog()) SendMessageA(g_combo, CB_ADDSTRING, 0, (LPARAM)m.name);
     SendMessage(g_combo, CB_SETCURSEL, 10, 0);  // a "superior" model by default
@@ -226,6 +228,15 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             MINMAXINFO* mi = (MINMAXINFO*)lp;
             mi->ptMinTrackSize.x = 720;
             mi->ptMinTrackSize.y = 620;
+            return 0;
+        }
+        case WM_NOTIFY: {
+            NMLISTVIEW* nm = (NMLISTVIEW*)lp;
+            if (nm->hdr.idFrom == ID_LIST && nm->hdr.code == LVN_ITEMCHANGED &&
+                (nm->uChanged & LVIF_STATE) && (nm->uNewState & LVIS_SELECTED)) {
+                SendMessage(g_combo, CB_SETCURSEL, nm->iItem, 0);
+                refreshRecommendation();
+            }
             return 0;
         }
         case WM_COMMAND:
