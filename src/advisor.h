@@ -61,6 +61,9 @@ Verdict evaluate(const ModelInfo& m, const Spec& s);
 const char* levelText(Level l);
 const char* kindText(Kind k);
 
+// Short capability tags, e.g. "Source code", "Voice, Cloning", "Video".
+std::string capabilities(const ModelInfo& m);
+
 // Explains what hardware model m needs to run smoothly and the cheapest upgrade
 // from spec s, plus suggested software.
 std::string recommend(const ModelInfo& m, const Spec& s);

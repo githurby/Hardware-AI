@@ -37,6 +37,7 @@
 			<Add option="-static" />
 			<Add library="comctl32" />
 			<Add library="comdlg32" />
+			<Add library="dwmapi" />
 		</Linker>
 		<Unit filename="src/advisor.cpp" />
 		<Unit filename="src/advisor.h" />

@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <commdlg.h>
+#include <dwmapi.h>
 
 #include <algorithm>
 #include <cstdarg>
@@ -17,14 +18,18 @@
 enum {
     ID_HWTEXT = 100, ID_REDETECT, ID_EXPORT,
     ID_CORES, ID_RAM, ID_RAMBW, ID_VRAM, ID_GPUPRESET, ID_APPLY, ID_RESET,
-    ID_QUANT, ID_CTX, ID_CATF, ID_HIDE,
+    ID_QUANT, ID_CTX, ID_CATF, ID_HIDE, ID_DARK,
     ID_LIST, ID_SUMMARY, ID_REC,
     ID_GRP_HW, ID_GRP_WHATIF, ID_GRP_OPT,
     ID_L1, ID_L2, ID_L3, ID_L4, ID_L5, ID_L6, ID_L7, ID_L8
 };
 
 static HINSTANCE g_inst;
-static HWND g_hwnd, g_hwText, g_list, g_rec, g_summary, g_hide;
+static HWND g_hwnd, g_hwText, g_list, g_rec, g_summary, g_hide, g_dark;
+static bool g_isDark = false;
+static HBRUSH g_bgBrush = nullptr, g_editBrush = nullptr;
+static const COLORREF DARK_BG = RGB(32, 32, 32), DARK_EDIT = RGB(45, 45, 45),
+                      DARK_TEXT = RGB(235, 235, 235);
 static HWND g_edCores, g_edRam, g_edRamBw, g_edVram;
 static HWND g_cbPreset, g_cbQuant, g_cbCtx, g_cbCat;
 static HwInfo g_hw;
@@ -101,7 +106,15 @@ static void syncOptions() {
     g_spec.ctx = contextSizes()[std::max(0, c)];
 }
 
-static COLORREF levelColor(Level l) {
+static COLORREF levelColor(Level l, bool dark) {
+    if (dark) {
+        switch (l) {
+            case LV_SMOOTH: return RGB(30, 80, 40);
+            case LV_USABLE: return RGB(90, 80, 25);
+            case LV_SLOW:   return RGB(100, 55, 30);
+            default:        return RGB(100, 35, 35);
+        }
+    }
     switch (l) {
         case LV_SMOOTH: return RGB(198, 239, 206);
         case LV_USABLE: return RGB(255, 242, 204);
@@ -121,10 +134,14 @@ static void sortView() {
                 return g_sortAsc ? c < 0 : c > 0;
             }
             case 1: x = a; y = b; break;
-            case 2: x = cat[a].paramsB; y = cat[b].paramsB; break;
-            case 3: x = g_verd[a].needGB; y = g_verd[b].needGB; break;
-            case 4: x = g_verd[a].level; y = g_verd[b].level; break;
-            case 5: {
+            case 2: {
+                int c = capabilities(cat[a]).compare(capabilities(cat[b]));
+                return g_sortAsc ? c < 0 : c > 0;
+            }
+            case 3: x = cat[a].paramsB; y = cat[b].paramsB; break;
+            case 4: x = g_verd[a].needGB; y = g_verd[b].needGB; break;
+            case 5: x = g_verd[a].level; y = g_verd[b].level; break;
+            case 6: {
                 int c = g_verd[a].mode.compare(g_verd[b].mode);
                 return g_sortAsc ? c < 0 : c > 0;
             }
@@ -183,11 +200,12 @@ static void refreshList() {
             SendMessageA(g_list, LVM_SETITEMTEXTA, r, (LPARAM)&sub);
         };
         set(1, cat[i].category);
-        set(2, paramsText(cat[i]));
-        set(3, fmt("%.1f GB", v.needGB));
-        set(4, levelText(v.level));
-        set(5, v.mode);
-        set(6, v.tps > 0 ? fmt("%.1f", v.tps) : std::string("-"));
+        set(2, capabilities(cat[i]));
+        set(3, paramsText(cat[i]));
+        set(4, fmt("%.1f GB", v.needGB));
+        set(5, levelText(v.level));
+        set(6, v.mode);
+        set(7, v.tps > 0 ? fmt("%.1f", v.tps) : std::string("-"));
         if (i == g_sel) {
             ListView_SetItemState(g_list, (int)r, LVIS_SELECTED | LVIS_FOCUSED,
                                   LVIS_SELECTED | LVIS_FOCUSED);
@@ -281,12 +299,12 @@ static void exportReport() {
     f << "Hardware-AI report\r\n==================\r\n\r\n" << hardwareText() << "\r\n";
     f << fmt("Used for calculation: %d cores, %.0f GB RAM, %.0f GB VRAM, %s, context %d\r\n\r\n",
              g_spec.cores, g_spec.ramGB, g_spec.vramGB, quants()[g_spec.quant].name, g_spec.ctx);
-    f << fmt("%-34s %-20s %9s %10s  %-10s %-8s %8s\r\n", "Model", "Category", "Params", "Memory",
+    f << fmt("%-34s %-20s %-24s %9s %10s  %-10s %-8s %8s\r\n", "Model", "Category", "Can do", "Params", "Memory",
              "Result", "Mode", "tok/s");
     for (size_t i = 0; i < cat.size(); ++i) {
         const Verdict& v = g_verd[i];
-        f << fmt("%-34s %-20s %9s %7.1f GB  %-10s %-8s %8s\r\n", cat[i].name, cat[i].category,
-                 paramsText(cat[i]).c_str(), v.needGB, levelText(v.level), v.mode.c_str(),
+        f << fmt("%-34s %-20s %-24s %9s %7.1f GB  %-10s %-8s %8s\r\n", cat[i].name,
+                 cat[i].category, capabilities(cat[i]).c_str(), paramsText(cat[i]).c_str(), v.needGB, levelText(v.level), v.mode.c_str(),
                  v.tps > 0 ? fmt("%.1f", v.tps).c_str() : "-");
     }
     if (g_sel >= 0) f << "\r\n---\r\n" << recommend(cat[g_sel], g_spec);
@@ -335,7 +353,8 @@ static void layout(int w, int h) {
     x += 140;
     place(ID_L8, x, cy + 3, 58, 18);        place(ID_CATF, x + 60, cy, 170, 300);
     x += 250;
-    place(ID_HIDE, x, cy, 170, 22);
+    place(ID_HIDE, x, cy, 150, 22);
+    place(ID_DARK, x + 155, cy, 100, 22);
     y += 60;
 
     int recH = 190;
@@ -393,14 +412,15 @@ static void createControls() {
     for (const auto& c : g_cats) SendMessageA(g_cbCat, CB_ADDSTRING, 0, (LPARAM)c.c_str());
     SendMessage(g_cbCat, CB_SETCURSEL, 0, 0);
     g_hide = mk("BUTTON", "Hide \"Cannot run\"", BS_AUTOCHECKBOX | WS_TABSTOP, ID_HIDE);
+    g_dark = mk("BUTTON", "Dark mode", BS_AUTOCHECKBOX | WS_TABSTOP, ID_DARK);
 
     g_list = mk(WC_LISTVIEWA, "", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_TABSTOP,
                 ID_LIST, WS_EX_CLIENTEDGE);
     ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
-    const char* cols[] = {"AI engine / model", "Category", "Params", "Memory needed", "Result",
-                          "Mode", "Est. tokens/s"};
-    const int widths[] = {210, 130, 70, 100, 85, 70, 90};
-    for (int i = 0; i < 7; ++i) {
+    const char* cols[] = {"AI engine / model", "Category", "Can do", "Params", "Memory needed",
+                          "Result", "Mode", "Est. tokens/s"};
+    const int widths[] = {190, 120, 150, 60, 95, 80, 65, 85};
+    for (int i = 0; i < 8; ++i) {
         LVCOLUMNA c = {};
         c.mask = LVCF_TEXT | LVCF_WIDTH;
         c.pszText = (char*)cols[i];
@@ -418,6 +438,64 @@ static void createControls() {
         (LPARAM)font);
 }
 
+static void setTheme(HWND h, const wchar_t* name) {
+    typedef HRESULT(WINAPI * Fn)(HWND, LPCWSTR, LPCWSTR);
+    static Fn fn = (Fn)(void*)GetProcAddress(LoadLibraryA("uxtheme.dll"), "SetWindowTheme");
+    if (fn) fn(h, name, nullptr);
+}
+
+static void saveDarkSetting() {
+    HKEY k;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Hardware-AI", 0, nullptr, 0, KEY_SET_VALUE,
+                        nullptr, &k, nullptr) == ERROR_SUCCESS) {
+        DWORD v = g_isDark;
+        RegSetValueExA(k, "DarkMode", 0, REG_DWORD, (const BYTE*)&v, sizeof v);
+        RegCloseKey(k);
+    }
+}
+
+static bool loadDarkSetting() {
+    HKEY k;
+    DWORD v = 0, sz = sizeof v;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Hardware-AI", 0, KEY_QUERY_VALUE, &k) ==
+        ERROR_SUCCESS) {
+        RegQueryValueExA(k, "DarkMode", nullptr, nullptr, (BYTE*)&v, &sz);
+        RegCloseKey(k);
+    }
+    return v != 0;
+}
+
+static void applyTheme(bool dark) {
+    g_isDark = dark;
+    if (g_bgBrush) DeleteObject(g_bgBrush);
+    if (g_editBrush) DeleteObject(g_editBrush);
+    g_bgBrush = CreateSolidBrush(dark ? DARK_BG : GetSysColor(COLOR_BTNFACE));
+    g_editBrush = CreateSolidBrush(dark ? DARK_EDIT : GetSysColor(COLOR_WINDOW));
+    SetClassLongPtr(g_hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)g_bgBrush);
+
+    BOOL on = dark;
+    DwmSetWindowAttribute(g_hwnd, 20, &on, sizeof on);  // dark title bar (Windows 10 20H1+)
+
+    EnumChildWindows(
+        g_hwnd,
+        [](HWND c, LPARAM) -> BOOL {
+            char cls[32];
+            GetClassNameA(c, cls, sizeof cls);
+            LONG st = GetWindowLong(c, GWL_STYLE) & BS_TYPEMASK;
+            bool plain = _stricmp(cls, "Button") == 0 && (st == BS_GROUPBOX || st == BS_AUTOCHECKBOX);
+            // Classic style makes group boxes and checkboxes honor the text color.
+            if (plain) setTheme(c, g_isDark ? L"" : nullptr);
+            else setTheme(c, g_isDark ? L"DarkMode_Explorer" : nullptr);
+            return TRUE;
+        },
+        0);
+    ListView_SetBkColor(g_list, dark ? DARK_EDIT : GetSysColor(COLOR_WINDOW));
+    ListView_SetTextBkColor(g_list, dark ? DARK_EDIT : GetSysColor(COLOR_WINDOW));
+    ListView_SetTextColor(g_list, dark ? DARK_TEXT : GetSysColor(COLOR_WINDOWTEXT));
+    SendMessage(g_dark, BM_SETCHECK, dark ? BST_CHECKED : BST_UNCHECKED, 0);
+    RedrawWindow(g_hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
+}
+
 static LRESULT onNotify(LPARAM lp) {
     NMHDR* h = (NMHDR*)lp;
     if (h->idFrom != ID_LIST) return 0;
@@ -431,7 +509,7 @@ static LRESULT onNotify(LPARAM lp) {
     } else if (h->code == LVN_COLUMNCLICK) {
         int col = ((NMLISTVIEW*)lp)->iSubItem;
         if (col == g_sortCol) g_sortAsc = !g_sortAsc;
-        else { g_sortCol = col; g_sortAsc = (col != 4 && col != 6); }
+        else { g_sortCol = col; g_sortAsc = (col != 5 && col != 7); }
         refreshList();
     } else if (h->code == NM_CUSTOMDRAW) {
         NMLVCUSTOMDRAW* cd = (NMLVCUSTOMDRAW*)lp;
@@ -439,8 +517,8 @@ static LRESULT onNotify(LPARAM lp) {
         if (cd->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
             int i = (int)cd->nmcd.dwItemSpec;
             if (i >= 0 && i < (int)g_view.size()) {
-                cd->clrTextBk = levelColor(g_verd[g_view[i]].level);
-                cd->clrText = RGB(0, 0, 0);
+                cd->clrTextBk = levelColor(g_verd[g_view[i]].level, g_isDark);
+                cd->clrText = g_isDark ? DARK_TEXT : RGB(0, 0, 0);
             }
             return CDRF_NEWFONT;
         }
@@ -454,16 +532,29 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_hwnd = hwnd;
             createControls();
             detectAndShow();
+            applyTheme(loadDarkSetting());
             return 0;
         case WM_SIZE:
             if (wp != SIZE_MINIMIZED) layout(LOWORD(lp), HIWORD(lp));
             return 0;
         case WM_GETMINMAXINFO: {
             MINMAXINFO* mi = (MINMAXINFO*)lp;
-            mi->ptMinTrackSize.x = 800;
+            mi->ptMinTrackSize.x = 880;
             mi->ptMinTrackSize.y = 720;
             return 0;
         }
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN:
+            if (!g_isDark) break;
+            SetTextColor((HDC)wp, DARK_TEXT);
+            SetBkColor((HDC)wp, DARK_BG);
+            return (LRESULT)g_bgBrush;
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORLISTBOX:
+            if (!g_isDark) break;
+            SetTextColor((HDC)wp, DARK_TEXT);
+            SetBkColor((HDC)wp, DARK_EDIT);
+            return (LRESULT)g_editBrush;
         case WM_NOTIFY:
             return onNotify(lp);
         case WM_COMMAND:
@@ -477,6 +568,10 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case ID_REDETECT: detectAndShow(); break;
                 case ID_EXPORT: exportReport(); break;
                 case ID_HIDE: refreshAll(); break;
+                case ID_DARK:
+                    applyTheme(SendMessage(g_dark, BM_GETCHECK, 0, 0) == BST_CHECKED);
+                    saveDarkSetting();
+                    break;
                 case ID_GPUPRESET:
                     if (HIWORD(wp) == CBN_SELCHANGE) onPresetChanged();
                     break;
@@ -508,7 +603,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show) {
     RegisterClassA(&wc);
 
     HWND w = CreateWindowA(wc.lpszClassName, "Hardware-AI - what AI can my PC run?",
-                           WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 860, 820, nullptr,
+                           WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 920, 820, nullptr,
                            nullptr, inst, nullptr);
     ShowWindow(w, show);
     UpdateWindow(w);

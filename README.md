@@ -9,6 +9,8 @@ Win32 GUI (C++17, no external libraries) that detects your hardware and estimate
 - Quantization (Q4/Q5/Q8/FP16) and context length (2K-128K, KV cache) change the memory needed.
 - Click any model: minimum hardware to run it smoothly, the cheapest RAM/VRAM upgrade from your hardware, and suggested software/backend.
 - What-if: edit cores, RAM, RAM GB/s, VRAM or pick a GPU preset (~50 GPUs) to test an upgrade.
+- "Can do" column with short capability tags (Source code, Text, Reasoning, Image, Video, Speech to text, Voice/Cloning, Music, Search/RAG...).
+- Optional dark mode (checkbox, remembered between runs).
 - Export a full text report.
 
 Estimates are heuristic (4-bit quantised models, memory-bandwidth bound speed); real results vary by engine and settings.
@@ -18,4 +20,4 @@ Open `Hardware-AI.cbp`, select Release, press Build & Run. Use a 64-bit MinGW (e
 
 Command line:
 
-    g++ -std=c++17 -O2 -mwindows -static -o Hardware-AI.exe src/*.cpp -lcomctl32 -lcomdlg32
+    g++ -std=c++17 -O2 -mwindows -static -o Hardware-AI.exe src/*.cpp -lcomctl32 -lcomdlg32 -ldwmapi

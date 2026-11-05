@@ -238,6 +238,29 @@ const char* kindText(Kind k) {
     }
 }
 
+std::string capabilities(const ModelInfo& m) {
+    const std::string n = lower(m.name), c = m.category;
+    auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
+    switch (m.kind) {
+        case K_IMAGE: return "Image";
+        case K_VIDEO: return has("stable video") ? "Video (from image)" : "Video";
+        case K_EMBED: return "Search, RAG";
+        case K_AUDIO:
+            if (has("whisper")) return "Speech to text";
+            if (has("xtts")) return "Voice, Cloning";
+            if (has("musicgen")) return "Music";
+            return "Audio";
+        default: break;
+    }
+    if (c == "LLM coding") return "Source code";
+    if (c == "LLM vision") return "Text, Image input";
+    std::string t = "Text";
+    if (c != "LLM small (<=4B)") t += ", Code";
+    if (has("r1") || has("qwen3") || has("gpt-oss") || has("phi-4")) t += ", Reasoning";
+    if (c == "LLM huge (70B+)" || c == "LLM MoE") t += ", Agents";
+    return t;
+}
+
 double estimateGpuBandwidth(const Spec& s) {
     if (s.vramGB <= 0) return 0;
     if (!s.vramOverridden) {
