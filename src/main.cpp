@@ -603,7 +603,7 @@ static void layout(int w, int h) {
     place(ID_ALLGPU, x + S(588), cy, S(150), ctlH);
     y += S(98);
 
-    place(ID_GRP_OPT, m, y, w - 2 * m, S(124));
+    place(ID_GRP_OPT, m, y, w - 2 * m, S(92));
     x = m + S(10);
     cy = y + S(22);
     place(ID_L6, x, cy + S(2), S(48), lblH);        place(ID_QUANT, x + S(50), cy, S(130), S(200));
@@ -621,13 +621,14 @@ static void layout(int w, int h) {
     place(ID_CMPPRESET, x + S(294), cy, S(240), S(300));
     place(ID_L9, x + S(546), cy + S(2), S(66), lblH);
     place(ID_CMPRAM, x + S(616), cy, S(58), ctlH);
-    cy += S(32);
-    place(ID_LANG, x, cy, S(130), ctlH);
-    place(ID_UPDATE, x + S(160), cy - S(1), S(220), S(26));
-    y += S(130);
+    place(ID_LANG, x + S(690), cy, S(110), ctlH);
+    place(ID_UPDATE, x + S(806), cy - S(1), S(190), S(26));
+    y += S(98);
 
-    const int recH = S(170);
-    int listH = std::max(S(100), h - y - recH - S(30) - 2 * m);
+    // The list gets about two thirds of the free height; the details panel keeps at least S(110).
+    const int free = h - y - S(24) - S(4) - m;
+    int listH = std::max(S(120), free * 62 / 100);
+    if (free - listH < S(110)) listH = std::max(S(120), free - S(110));
     MoveWindow(g_list, m, y, w - 2 * m, listH, TRUE);
     y += listH + S(4);
     MoveWindow(g_summary, m, y, w - 2 * m, S(20), TRUE);
@@ -999,8 +1000,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             MINMAXINFO* mi = (MINMAXINFO*)lp;
             RECT wa;
             SystemParametersInfo(SPI_GETWORKAREA, 0, &wa, 0);
-            mi->ptMinTrackSize.x = std::min<LONG>(S(900) + 20, wa.right - wa.left);
-            mi->ptMinTrackSize.y = std::min<LONG>(S(672) + 40, wa.bottom - wa.top);
+            mi->ptMinTrackSize.x = std::min<LONG>(S(1060) + 20, wa.right - wa.left);
+            mi->ptMinTrackSize.y = std::min<LONG>(S(640) + 40, wa.bottom - wa.top);
             return 0;
         }
         case WM_CTLCOLORSTATIC:
@@ -1098,8 +1099,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show) {
         ReleaseDC(nullptr, dc);
         g_scalePct = MulDiv(100, 10 * dpi, 8 * 96);  // same value initFont() computes
     }
-    int ww = std::min<int>(S(940) + 20, wa.right - wa.left);
-    int wh = std::min<int>(S(812) + 40, wa.bottom - wa.top);
+    int ww = std::min<int>(S(1060) + 20, wa.right - wa.left);
+    int wh = std::min<int>(S(860) + 40, wa.bottom - wa.top);
     HWND w = CreateWindowA(wc.lpszClassName, "Hardware-AI - what AI can my PC run?",
                            WS_OVERLAPPEDWINDOW, wa.left + (wa.right - wa.left - ww) / 2,
                            wa.top + (wa.bottom - wa.top - wh) / 2, ww, wh, nullptr,
