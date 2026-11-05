@@ -319,51 +319,68 @@ static void place(int id, int x, int y, int w, int h) {
     MoveWindow(GetDlgItem(g_hwnd, id), x, y, w, h, TRUE);
 }
 
+// Everything is laid out for an 8pt font and multiplied by the font scale.
+static int g_scalePct = 100;
+static HFONT g_font = nullptr;
+static int S(int v) { return MulDiv(v, g_scalePct, 100); }
+
+static void initFont() {
+    const int pt = 10;  // UI font size in points
+    HDC dc = GetDC(nullptr);
+    int dpi = GetDeviceCaps(dc, LOGPIXELSY);
+    ReleaseDC(nullptr, dc);
+    g_scalePct = MulDiv(100, pt * dpi, 8 * 96);
+    g_font = CreateFontA(-MulDiv(pt, dpi, 72), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                         DEFAULT_PITCH | FF_SWISS, "Segoe UI");
+}
+
 static void layout(int w, int h) {
-    const int m = 10;
+    const int m = S(10);
+    const int ctlH = S(24), lblH = S(20);
     int y = m;
-    place(ID_GRP_HW, m, y, w - 2 * m, 96);
-    place(ID_HWTEXT, m + 8, y + 18, w - 2 * m - 130, 74);
-    place(ID_REDETECT, w - m - 112, y + 20, 104, 26);
-    place(ID_EXPORT, w - m - 112, y + 54, 104, 26);
-    y += 102;
+    place(ID_GRP_HW, m, y, w - 2 * m, S(104));
+    place(ID_HWTEXT, m + S(8), y + S(20), w - 2 * m - S(140), S(80));
+    place(ID_REDETECT, w - m - S(120), y + S(22), S(112), S(28));
+    place(ID_EXPORT, w - m - S(120), y + S(58), S(112), S(28));
+    y += S(110);
 
-    place(ID_GRP_WHATIF, m, y, w - 2 * m, 82);
-    int x = m + 10, cy = y + 20;
-    place(ID_L1, x, cy + 3, 68, 18);        place(ID_CORES, x + 70, cy, 45, 22);
-    x += 135;
-    place(ID_L2, x, cy + 3, 56, 18);        place(ID_RAM, x + 58, cy, 55, 22);
-    x += 130;
-    place(ID_L3, x, cy + 3, 68, 18);        place(ID_RAMBW, x + 70, cy, 55, 22);
-    x += 150;
-    place(ID_L4, x, cy + 3, 64, 18);        place(ID_VRAM, x + 66, cy, 55, 22);
-    x = m + 10;
-    cy += 28;
-    place(ID_L5, x, cy + 3, 68, 18);        place(ID_GPUPRESET, x + 70, cy, 260, 300);
-    place(ID_APPLY, x + 350, cy - 1, 70, 24);
-    place(ID_RESET, x + 428, cy - 1, 130, 24);
-    y += 90;
+    place(ID_GRP_WHATIF, m, y, w - 2 * m, S(92));
+    int x = m + S(10), cy = y + S(22);
+    place(ID_L1, x, cy + S(2), S(72), lblH);        place(ID_CORES, x + S(74), cy, S(48), ctlH);
+    x += S(145);
+    place(ID_L2, x, cy + S(2), S(62), lblH);        place(ID_RAM, x + S(64), cy, S(58), ctlH);
+    x += S(140);
+    place(ID_L3, x, cy + S(2), S(72), lblH);        place(ID_RAMBW, x + S(74), cy, S(58), ctlH);
+    x += S(160);
+    place(ID_L4, x, cy + S(2), S(72), lblH);        place(ID_VRAM, x + S(74), cy, S(58), ctlH);
+    x = m + S(10);
+    cy += S(32);
+    place(ID_L5, x, cy + S(2), S(76), lblH);        place(ID_GPUPRESET, x + S(78), cy, S(270), S(300));
+    place(ID_APPLY, x + S(372), cy - S(1), S(76), S(26));
+    place(ID_RESET, x + S(456), cy - S(1), S(140), S(26));
+    y += S(98);
 
-    place(ID_GRP_OPT, m, y, w - 2 * m, 52);
-    x = m + 10;
-    cy = y + 20;
-    place(ID_L6, x, cy + 3, 40, 18);        place(ID_QUANT, x + 42, cy, 120, 200);
-    x += 180;
-    place(ID_L7, x, cy + 3, 52, 18);        place(ID_CTX, x + 54, cy, 70, 200);
-    x += 140;
-    place(ID_L8, x, cy + 3, 58, 18);        place(ID_CATF, x + 60, cy, 170, 300);
-    x += 250;
-    place(ID_HIDE, x, cy, 150, 22);
-    place(ID_DARK, x + 155, cy, 100, 22);
-    y += 60;
+    place(ID_GRP_OPT, m, y, w - 2 * m, S(58));
+    x = m + S(10);
+    cy = y + S(22);
+    place(ID_L6, x, cy + S(2), S(48), lblH);        place(ID_QUANT, x + S(50), cy, S(130), S(200));
+    x += S(190);
+    place(ID_L7, x, cy + S(2), S(60), lblH);        place(ID_CTX, x + S(62), cy, S(76), S(200));
+    x += S(150);
+    place(ID_L8, x, cy + S(2), S(68), lblH);        place(ID_CATF, x + S(70), cy, S(180), S(300));
+    x += S(262);
+    place(ID_HIDE, x, cy, S(140), ctlH);
+    place(ID_DARK, x + S(146), cy, S(100), ctlH);
+    y += S(66);
 
-    int recH = 190;
-    int listH = std::max(100, h - y - recH - 26 - 2 * m);
+    const int recH = S(190);
+    int listH = std::max(S(100), h - y - recH - S(30) - 2 * m);
     MoveWindow(g_list, m, y, w - 2 * m, listH, TRUE);
-    y += listH + 4;
-    MoveWindow(g_summary, m, y, w - 2 * m, 18, TRUE);
-    y += 22;
-    MoveWindow(g_rec, m, y, w - 2 * m, std::max(60, h - y - m), TRUE);
+    y += listH + S(4);
+    MoveWindow(g_summary, m, y, w - 2 * m, S(20), TRUE);
+    y += S(24);
+    MoveWindow(g_rec, m, y, w - 2 * m, std::max(S(60), h - y - m), TRUE);
 }
 
 static void createControls() {
@@ -419,7 +436,7 @@ static void createControls() {
     ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
     const char* cols[] = {"AI engine / model", "Category", "Can do", "Params", "Memory needed",
                           "Result", "Mode", "Est. tokens/s"};
-    const int widths[] = {190, 120, 150, 60, 95, 80, 65, 85};
+    const int widths[] = {S(190), S(120), S(150), S(62), S(100), S(80), S(68), S(92)};
     for (int i = 0; i < 8; ++i) {
         LVCOLUMNA c = {};
         c.mask = LVCF_TEXT | LVCF_WIDTH;
@@ -432,7 +449,7 @@ static void createControls() {
     g_rec = mk("EDIT", "", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, ID_REC,
                WS_EX_CLIENTEDGE);
 
-    HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    HFONT font = g_font;
     EnumChildWindows(
         g_hwnd, [](HWND c, LPARAM f) -> BOOL { SendMessage(c, WM_SETFONT, f, TRUE); return TRUE; },
         (LPARAM)font);
@@ -530,6 +547,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE:
             g_hwnd = hwnd;
+            initFont();
             createControls();
             detectAndShow();
             applyTheme(loadDarkSetting());
@@ -539,8 +557,10 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_GETMINMAXINFO: {
             MINMAXINFO* mi = (MINMAXINFO*)lp;
-            mi->ptMinTrackSize.x = 880;
-            mi->ptMinTrackSize.y = 720;
+            RECT wa;
+            SystemParametersInfo(SPI_GETWORKAREA, 0, &wa, 0);
+            mi->ptMinTrackSize.x = std::min<LONG>(S(900) + 20, wa.right - wa.left);
+            mi->ptMinTrackSize.y = std::min<LONG>(S(540) + 40, wa.bottom - wa.top);
             return 0;
         }
         case WM_CTLCOLORSTATIC:
@@ -606,8 +626,19 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show) {
                                   GetSystemMetrics(SM_CYSMICON), 0);
     RegisterClassExA(&wc);
 
+    RECT wa;
+    SystemParametersInfo(SPI_GETWORKAREA, 0, &wa, 0);
+    {
+        HDC dc = GetDC(nullptr);
+        int dpi = GetDeviceCaps(dc, LOGPIXELSY);
+        ReleaseDC(nullptr, dc);
+        g_scalePct = MulDiv(100, 10 * dpi, 8 * 96);  // same value initFont() computes
+    }
+    int ww = std::min<int>(S(940) + 20, wa.right - wa.left);
+    int wh = std::min<int>(S(660) + 40, wa.bottom - wa.top);
     HWND w = CreateWindowA(wc.lpszClassName, "Hardware-AI - what AI can my PC run?",
-                           WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 920, 820, nullptr,
+                           WS_OVERLAPPEDWINDOW, wa.left + (wa.right - wa.left - ww) / 2,
+                           wa.top + (wa.bottom - wa.top - wh) / 2, ww, wh, nullptr,
                            nullptr, inst, nullptr);
     ShowWindow(w, show);
     UpdateWindow(w);
