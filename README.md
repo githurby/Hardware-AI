@@ -35,3 +35,6 @@ Command line:
 - **Profiles**: save/load hardware setups as `.hwai` files.
 - **Languages**: English / Português (checkbox in Options; saved, defaults to the Windows UI language). Translates the UI, hardware panel, recommendations and reports.
 - **Update models online**: downloads `models-online.csv` from this repository (cached in `%APPDATA%\Hardware-AI`) and adds new models without reinstalling. A copy next to the exe (or up to 3 folders above) is also loaded at startup.
+
+## Manual
+Full user guide (dark theme): [docs/manual.html](docs/manual.html) - download and open in any browser.
