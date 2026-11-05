@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardware-AI - User Manual</title>
+<style>
+  :root { --bg:#14161a; --panel:#1c1f26; --text:#e2e5ea; --muted:#9aa3b2; --accent:#4cc2ff; --line:#2c313c;
+          --ok:#3fb950; --warn:#e3b341; --slow:#f0883e; --no:#f85149; }
+  * { box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.65 "Segoe UI",system-ui,sans-serif; }
+  .wrap { display:flex; max-width:1200px; margin:0 auto; }
+  nav { position:sticky; top:0; align-self:flex-start; height:100vh; overflow:auto; width:250px; padding:28px 18px;
+        border-right:1px solid var(--line); flex-shrink:0; }
+  nav h2 { font-size:14px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:0 0 12px; border:0; }
+  nav a { display:block; color:var(--text); text-decoration:none; padding:5px 10px; border-radius:6px; font-size:14.5px; }
+  nav a:hover { background:var(--panel); color:var(--accent); }
+  main { padding:36px 44px 80px; min-width:0; }
+  h1 { font-size:2.2rem; margin:0 0 6px; }
+  h1 span { color:var(--accent); }
+  .lead { color:var(--muted); font-size:1.1rem; margin-bottom:28px; }
+  h2 { margin-top:48px; padding-bottom:8px; border-bottom:1px solid var(--line); font-size:1.6rem; }
+  h3 { margin-top:28px; color:var(--accent); font-size:1.15rem; }
+  a { color:var(--accent); }
+  code { background:#0e1013; border:1px solid var(--line); border-radius:5px; padding:1px 6px;
+         font-family:Consolas,monospace; font-size:.9em; }
+  pre { background:#0e1013; border:1px solid var(--line); border-radius:8px; padding:14px 16px; overflow:auto; }
+  pre code { border:0; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:14px 0; font-size:.95rem; }
+  th, td { border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top; }
+  th { background:var(--panel); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 20px; margin:14px 0; }
+  .tip { border-left:4px solid var(--ok); } .warn { border-left:4px solid var(--warn); }
+  .card b.t { display:block; margin-bottom:4px; }
+  .pill { display:inline-block; padding:1px 10px; border-radius:99px; font-size:.85rem; font-weight:600; color:#111; }
+  .p-ok{background:var(--ok)} .p-us{background:var(--warn)} .p-sl{background:var(--slow)} .p-no{background:var(--no)}
+  ul, ol { padding-left:22px; } li { margin:4px 0; }
+  footer { margin-top:60px; color:var(--muted); font-size:.9rem; border-top:1px solid var(--line); padding-top:16px; }
+  @media (max-width:820px){ nav{display:none} main{padding:24px 18px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <h2>Contents</h2>
+  <a href="#what">What it does</a>
+  <a href="#start">Getting started</a>
+  <a href="#window">The main window</a>
+  <a href="#results">Reading the results</a>
+  <a href="#whatif">What-if hardware</a>
+  <a href="#options">Options</a>
+  <a href="#list">Working with the list</a>
+  <a href="#buttons">Buttons &amp; tools</a>
+  <a href="#custom">Adding your own models</a>
+  <a href="#online">Online updates</a>
+  <a href="#tips">Tips &amp; tricks</a>
+  <a href="#faq">Troubleshooting</a>
+  <a href="#how">How estimates work</a>
+</nav>
+<main>
+
+<h1>Hardware<span>-AI</span></h1>
+<div class="lead">Find out which AI engines and models your PC can run smoothly &mdash; and what to upgrade to run better ones.</div>
+
+<h2 id="what">What this program does</h2>
+<p>Hardware-AI detects your <b>CPU, RAM, RAM speed, GPU(s), VRAM and free disk space</b>, then checks a catalog of
+about 130 AI models (chat, coding, vision, image, video, audio, embeddings) and tells you, for each one:</p>
+<ul>
+  <li>whether it can run, and how well (<span class="pill p-ok">Smooth</span> <span class="pill p-us">Usable</span>
+      <span class="pill p-sl">Slow</span> <span class="pill p-no">Cannot run</span>);</li>
+  <li>how much memory it needs and how big the download is;</li>
+  <li>an estimated speed in tokens per second (for language models);</li>
+  <li>for models that don't fit: the <b>minimum hardware</b> needed and the <b>cheapest upgrade</b> from where you are now.</li>
+</ul>
+<p>Everything runs locally; nothing is uploaded. The only network feature is the optional <i>Update models online</i> button.</p>
+
+<h2 id="start">Getting started</h2>
+<ol>
+  <li>Start <code>Hardware-AI.exe</code>. Detection runs automatically.</li>
+  <li>Read the <b>Detected hardware</b> panel at the top to confirm it matches your PC.</li>
+  <li>Click <b>Benchmark RAM</b> once (a few seconds) for much more accurate speed estimates.</li>
+  <li>Scroll the model list. Green rows are good, red rows cannot run.</li>
+  <li>Click any model to read its details and requirements in the bottom panel.</li>
+</ol>
+
+<h2 id="window">The main window</h2>
+<table>
+  <tr><th>Area</th><th>Purpose</th></tr>
+  <tr><td><b>Detected hardware</b></td><td>What was found: CPU (cores, AVX/AVX2/AVX-512), RAM (size, modules, speed, measured bandwidth), GPU(s) with VRAM, free disk. Buttons on the right: Re-detect, Benchmark RAM, Export report, Save/Load profile, Copy run command.</td></tr>
+  <tr><td><b>What-if hardware</b></td><td>Editable values the calculation actually uses. Change them to simulate an upgrade.</td></tr>
+  <tr><td><b>Options</b></td><td>Quantization, context size, category filter, display filters, compare mode, theme, language, online update.</td></tr>
+  <tr><td><b>Model list</b></td><td>Every model with category, abilities, size, memory, verdict, mode, speed, download size.</td></tr>
+  <tr><td><b>Summary line</b></td><td>Counts per result level and the best smooth language model for your PC.</td></tr>
+  <tr><td><b>Details panel</b></td><td>Requirements, minimum hardware, cheapest upgrade, software to use, and a ready-made command.</td></tr>
+</table>
+
+<h2 id="results">Reading the results</h2>
+<table>
+  <tr><th>Result</th><th>Meaning</th></tr>
+  <tr><td><span class="pill p-ok">Smooth</span></td><td>About 15+ tokens/s (language models) &mdash; comfortable to chat with.</td></tr>
+  <tr><td><span class="pill p-us">Usable</span></td><td>About 5&ndash;15 tokens/s &mdash; fine for short answers, a bit of waiting.</td></tr>
+  <tr><td><span class="pill p-sl">Slow</span></td><td>Under 5 tokens/s &mdash; works, but patience required.</td></tr>
+  <tr><td><span class="pill p-no">Cannot run</span></td><td>Doesn't fit in VRAM + RAM. Click it to see what hardware it needs.</td></tr>
+</table>
+<table>
+  <tr><th>Mode</th><th>Meaning</th></tr>
+  <tr><td><code>GPU</code></td><td>Whole model in VRAM &mdash; fastest.</td></tr>
+  <tr><td><code>GPU+CPU</code></td><td>Part of the model in VRAM, the rest in system RAM (partial offload). Slower than full GPU.</td></tr>
+  <tr><td><code>CPU</code></td><td>Entirely in system RAM; speed depends mainly on RAM bandwidth.</td></tr>
+</table>
+<p><b>Can do</b> column: short tags such as <i>Source code, Text, Reasoning, Agents, Image, Video, Speech to text, Voice, Cloning, Music, Search</i>.</p>
+<p><b>Params</b> shows the parameter count. Mixture-of-Experts (MoE) models need memory for all parameters but read only the active ones per token, so they are often faster than their size suggests.</p>
+
+<h2 id="whatif">What-if hardware</h2>
+<p>These fields start with your detected values. Edit them and press <b>Apply</b> to see how the whole list changes.</p>
+<ul>
+  <li><b>CPU cores</b> &mdash; physical cores used for CPU inference.</li>
+  <li><b>RAM (GB)</b> &mdash; total system memory (3&nbsp;GB is reserved for Windows).</li>
+  <li><b>RAM GB/s</b> &mdash; memory bandwidth, the main driver of CPU speed. Leave blank for an estimate from your RAM type, or use <i>Benchmark RAM</i> for a measured value.</li>
+  <li><b>VRAM (GB)</b> &mdash; graphics memory.</li>
+  <li><b>GPU preset</b> &mdash; pick a real card (RTX 4060, 4090, 5090, RX 7900 XTX, Arc&hellip;) to fill VRAM and GPU bandwidth. "No GPU" simulates CPU only.</li>
+  <li><b>Reset to detected</b> &mdash; go back to your real hardware.</li>
+  <li><b>Sum all GPUs</b> &mdash; adds the VRAM of several dedicated GPUs (integrated GPUs under 1&nbsp;GB are ignored).</li>
+</ul>
+<div class="card warn"><b class="t">Multi-GPU note</b>Summed VRAM assumes the engine can split a model across cards (llama.cpp does). Speed with mixed or PCIe-limited cards can be lower than estimated.</div>
+
+<h2 id="options">Options</h2>
+<table>
+  <tr><th>Option</th><th>What it does</th></tr>
+  <tr><td><b>Quant</b></td><td>Compression level of the weights: <code>Q4_K_M</code> (default, best balance), <code>Q5</code>, <code>Q8</code>, <code>FP16</code>. Lower = smaller and faster but slightly less accurate.</td></tr>
+  <tr><td><b>Context</b></td><td>Conversation memory (e.g. 4K, 8K, 32K&hellip;). Longer context needs more memory for the KV cache.</td></tr>
+  <tr><td><b>Category</b></td><td>Show only one group (small / medium / large / huge LLMs, MoE, coding, vision, image, video, audio, embedding&hellip;).</td></tr>
+  <tr><td><b>Hide "Cannot run"</b></td><td>Show only models that work on your hardware.</td></tr>
+  <tr><td><b>Favorites only</b></td><td>Show only starred models.</td></tr>
+  <tr><td><b>Compare with</b></td><td>Adds a <i>Compare</i> column that evaluates every model on another GPU + RAM combination (set the GPU and RAM&nbsp;GB beside it).</td></tr>
+  <tr><td><b>Dark mode</b></td><td>Dark interface and dark title bar; remembered next time.</td></tr>
+  <tr><td><b>Portugu&ecirc;s</b></td><td>Switches the program between English and Portuguese; remembered next time.</td></tr>
+  <tr><td><b>Update models online</b></td><td>Downloads the latest extra models (see below).</td></tr>
+</table>
+
+<h2 id="list">Working with the list</h2>
+<ul>
+  <li><b>Click a column header</b> to sort; click again to reverse. Sort by <i>Est. tokens/s</i> to find the fastest model, or by <i>Download</i> to find the smallest.</li>
+  <li><b>Single click</b> a row: shows full details and requirements below.</li>
+  <li><b>Double-click</b> a row: adds/removes it from your favorites (marked with <code>*</code>). Favorites are saved.</li>
+  <li><b>Row colors</b> follow the result level, in both light and dark themes.</li>
+  <li>If your disk is too small for a model's download, the details panel warns you.</li>
+</ul>
+
+<h2 id="buttons">Buttons &amp; tools</h2>
+<h3>Re-detect</h3>
+<p>Scans the hardware again (use after installing a GPU or RAM) and discards manual changes.</p>
+<h3>Benchmark RAM</h3>
+<p>Reads a large block of memory with several threads to measure real bandwidth in GB/s. The result replaces the estimate everywhere. Close heavy programs first for a true reading. Typical values: older DDR2/DDR3 desktops 5&ndash;20, dual-channel DDR4 30&ndash;50, DDR5 60&ndash;90, workstation/server 100+.</p>
+<h3>Export report</h3>
+<p>Saves a text file with your hardware, the settings used, and the full model table &mdash; handy for forum posts or hardware shopping lists.</p>
+<h3>Save profile / Load profile</h3>
+<p>Stores your what-if setup (<code>.hwai</code> file: cores, RAM, bandwidth, VRAM, GPU, quant, context). Make profiles like <i>"Current PC"</i>, <i>"After RTX 4060 Ti 16GB"</i>, <i>"Dream workstation"</i> and switch between them in one click.</p>
+<h3>Copy run command</h3>
+<p>Select a language model that fits, then click. A ready <code>llama-server</code> command is copied to the clipboard, with context size, threads, GPU layers (<code>-ngl</code>), flash attention, and for MoE models the trick of keeping expert weights in RAM. Replace the model file name with your downloaded <code>.gguf</code> path.</p>
+<pre><code>llama-server -m "Qwen3 8B-Q4_K_M.gguf" -c 4096 -t 4 -ngl 99 -fa</code></pre>
+
+<h2 id="custom">Adding your own models</h2>
+<p>Create or edit <code>models.csv</code> next to the program (or up to three folders above it). One model per line:</p>
+<pre><code>name,category,kind,paramsB,activeB,fixedGB,cpuOk
+My-Llama-70B,LLM huge (70B+),llm,70,70,0,1
+My-Image-Model,Image,image,0,0,12,0</code></pre>
+<table>
+  <tr><th>Field</th><th>Meaning</th></tr>
+  <tr><td>name</td><td>Display name (names already in the catalog are skipped).</td></tr>
+  <tr><td>category</td><td>Group name; an existing one, or a new one that will appear in the Category filter.</td></tr>
+  <tr><td>kind</td><td><code>llm</code>, <code>image</code>, <code>video</code>, <code>audio</code> or <code>embed</code>.</td></tr>
+  <tr><td>paramsB</td><td>Parameters in billions (LLM / embed).</td></tr>
+  <tr><td>activeB</td><td>Active parameters per token; same as paramsB unless MoE.</td></tr>
+  <tr><td>fixedGB</td><td>Memory needed for non-LLM models (0 for LLMs).</td></tr>
+  <tr><td>cpuOk</td><td><code>1</code> if it can run on CPU, otherwise <code>0</code>.</td></tr>
+</table>
+<p>Lines starting with <code>#</code> are comments. Restart the program to load changes. Extra models are counted in the summary line (<i>+N custom models</i>).</p>
+
+<h2 id="online">Online updates</h2>
+<p><b>Update models online</b> downloads <code>models-online.csv</code> from the project's GitHub repository, saves it to
+<code>%APPDATA%\Hardware-AI</code> and adds any new models immediately. It is loaded again automatically at every start.
+If you are offline you'll get a message and nothing changes. "Already up to date" means no new names were found.</p>
+
+<h2 id="tips">Tips &amp; tricks</h2>
+<div class="card tip"><b class="t">1. Run the RAM benchmark first</b>CPU speed is almost entirely RAM bandwidth. A measured value beats any estimate.</div>
+<div class="card tip"><b class="t">2. Memory bandwidth beats core count</b>Faster RAM (or dual-channel) speeds up CPU inference more than extra cores. Check that both sticks are in the correct slots.</div>
+<div class="card tip"><b class="t">3. Try lower quant or shorter context</b>Switching Q8 &rarr; Q4_K_M, or 32K &rarr; 4K, can turn <i>Cannot run</i> into <i>Usable</i> without spending anything.</div>
+<div class="card tip"><b class="t">4. MoE models are a hidden gem</b>Models marked (MoE) need lots of RAM but read few parameters per token. With plenty of RAM they can beat dense models of the same size.</div>
+<div class="card tip"><b class="t">5. VRAM is king</b>A model fully inside VRAM (GPU mode) is far faster than any GPU+CPU split. When shopping, prefer more VRAM over a slightly faster chip.</div>
+<div class="card tip"><b class="t">6. Plan upgrades with presets</b>Choose a GPU preset, add RAM in the what-if box, press Apply, and watch how many rows turn green. Use <i>Compare with</i> to see current vs. planned side by side, and save each plan as a profile.</div>
+<div class="card tip"><b class="t">7. Sort to find your best model</b>Hide "Cannot run", sort by <i>Est. tokens/s</i> descending, and choose the biggest model that is still Smooth or Usable.</div>
+<div class="card tip"><b class="t">8. Check the budget lines</b>The cheapest-upgrade section lists rough prices and the minimum power supply for the GPU tier. Prices are estimates &mdash; verify locally.</div>
+<div class="card tip"><b class="t">9. Free disk space</b>Large models are tens or hundreds of GB. Watch the <i>Download</i> column and the disk warning.</div>
+<div class="card tip"><b class="t">10. Where to run them</b>Language models: llama.cpp, Ollama or LM Studio. Images/video: ComfyUI or Forge. Speech: whisper.cpp, Piper, XTTS. The details panel names the right one, with the backend for your GPU (CUDA, Vulkan, ROCm, SYCL).</div>
+
+<h2 id="faq">Troubleshooting</h2>
+<table>
+  <tr><th>Problem</th><th>Solution</th></tr>
+  <tr><td>VRAM is wrong or shows 0</td><td>Integrated or very old GPUs may report incorrectly. Type the real value in <b>VRAM (GB)</b> or pick a preset, then Apply.</td></tr>
+  <tr><td>RAM speed or GB/s not shown</td><td>Some PCs don't expose memory info. Use <b>Benchmark RAM</b>, or type a value.</td></tr>
+  <tr><td>Benchmark says not enough memory</td><td>Close other programs and try again.</td></tr>
+  <tr><td>A model I know is missing</td><td>Add it in <code>models.csv</code>, or try <i>Update models online</i>.</td></tr>
+  <tr><td>Estimate differs from my real speed</td><td>Estimates are approximate. Engine, drivers, thermal throttling, background apps and quantization all matter. Use them for comparison and planning, not as a guarantee.</td></tr>
+  <tr><td>Online update fails</td><td>Check internet/firewall. The program keeps working offline with the last saved list.</td></tr>
+  <tr><td>Reset everything</td><td>Delete the registry key <code>HKEY_CURRENT_USER\Software\Hardware-AI</code> (favorites, theme, language) and the folder <code>%APPDATA%\Hardware-AI</code>.</td></tr>
+</table>
+
+<h2 id="how">How the estimates work</h2>
+<ul>
+  <li><b>Memory needed</b> = weights (parameters &times; bytes per parameter for the chosen quant) + KV cache for the chosen context + a small overhead.</li>
+  <li><b>Speed</b> &asymp; memory bandwidth &times; efficiency &divide; data read per token. GPU uses VRAM bandwidth, CPU uses RAM bandwidth, partial offload mixes both by the share of the model on each side.</li>
+  <li><b>Thresholds:</b> Smooth &ge; 15 tok/s, Usable &ge; 5 tok/s.</li>
+  <li><b>System reserve:</b> 3&nbsp;GB of RAM is kept for Windows.</li>
+  <li>Model sizes, active parameters and upgrade prices are the author's estimates and may differ from real files.</li>
+</ul>
+
+<footer>Hardware-AI &middot; <a href="https://github.com/githurby/Hardware-AI">github.com/githurby/Hardware-AI</a></footer>
+</main>
+</div>
+</body>
+</html>
