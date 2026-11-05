@@ -12,70 +12,247 @@ const double OS_RESERVE_GB = 3.0; // RAM kept for Windows and other programs
 const double SMOOTH_TPS = 15.0;
 const double USABLE_TPS = 5.0;
 
-double needFor(const ModelInfo& m) { return m.sizeGB * 1.1 + 0.8; }  // weights + context
-
-struct GpuBw { const char* key; double gbs; };
-
-// Approximate memory bandwidth (GB/s). More specific names first.
-const GpuBw GPU_TABLE[] = {
-    {"RTX 5090", 1792}, {"RTX 5080", 960}, {"RTX 5070 Ti", 896}, {"RTX 5070", 672},
-    {"RTX 4090", 1008}, {"RTX 4080", 717}, {"RTX 4070 Ti", 504}, {"RTX 4070", 504},
-    {"RTX 4060 Ti", 288}, {"RTX 4060", 272},
-    {"RTX 3090", 936}, {"RTX 3080 Ti", 912}, {"RTX 3080", 760}, {"RTX 3070", 448},
-    {"RTX 3060 Ti", 448}, {"RTX 3060", 360}, {"RTX 3050", 224},
-    {"RTX 2080", 448}, {"RTX 2070", 448}, {"RTX 2060", 336},
-    {"GTX 1080", 320}, {"GTX 1070", 256}, {"GTX 1660", 192}, {"GTX 1650", 128},
-    {"GTX 1060", 192},
-    {"RX 7900 XTX", 960}, {"RX 7900 XT", 800}, {"RX 7800", 624}, {"RX 7700", 432},
-    {"RX 7600", 288}, {"RX 6900", 512}, {"RX 6800", 512}, {"RX 6700", 384},
-    {"RX 6600", 224}, {"RX 580", 256},
-    {"Arc A770", 560}, {"Arc A750", 512}, {"Arc A580", 512},
-};
-
 std::string lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return (char)std::tolower(c); });
     return s;
 }
 
-bool containsNoCase(const std::string& hay, const char* needle) {
+bool containsNoCase(const std::string& hay, const std::string& needle) {
     return lower(hay).find(lower(needle)) != std::string::npos;
+}
+
+const Quant& quantOf(const Spec& s) {
+    const auto& q = quants();
+    int i = std::max(0, std::min((int)q.size() - 1, s.quant));
+    return q[i];
+}
+
+double weightsGB(const ModelInfo& m, const Spec& s) {
+    return m.kind == K_LLM ? m.paramsB * quantOf(s).bytes : m.fixedGB;
+}
+
+// KV cache grows with context; ~0.035 * active_params^0.6 GB per 1k tokens fits
+// common GQA models (8B ~0.12, 70B ~0.45).
+double kvGB(const ModelInfo& m, const Spec& s) {
+    if (m.kind != K_LLM) return 0;
+    return 0.035 * std::pow(m.activeB, 0.6) * s.ctx / 1000.0;
+}
+
+double memoryNeeded(const ModelInfo& m, const Spec& s) {
+    if (m.kind != K_LLM) return m.fixedGB;
+    return weightsGB(m, s) * 1.05 + kvGB(m, s) + 0.6;
+}
+
+// Memory needed from the GPU/CPU per generated token (GB).
+double readPerToken(const ModelInfo& m, const Spec& s) {
+    return m.activeB * quantOf(s).bytes;
+}
+
+Level levelFor(double tps) {
+    if (tps >= SMOOTH_TPS) return LV_SMOOTH;
+    if (tps >= USABLE_TPS) return LV_USABLE;
+    return LV_SLOW;
+}
+
+const char* gpuTier(double vram) {
+    if (vram <= 4)  return "GTX 1650 / RTX 3050 4GB class";
+    if (vram <= 6)  return "RTX 2060 / GTX 1660 class";
+    if (vram <= 8)  return "RTX 3070 / RTX 4060 / RX 7600 class";
+    if (vram <= 12) return "RTX 3060 12GB / RTX 4070 / Arc B580 class";
+    if (vram <= 16) return "RTX 4060 Ti 16GB / RTX 5070 Ti / RX 7800 XT class";
+    if (vram <= 24) return "RTX 3090 / RTX 4090 / RX 7900 XTX class";
+    if (vram <= 32) return "RTX 5090 class";
+    if (vram <= 48) return "2x 24GB GPUs or RTX A6000 / RTX 6000 Ada class";
+    if (vram <= 80) return "A100 / H100 80GB or 3-4x 24GB GPUs";
+    return "multi-GPU workstation / server (several 80GB datacenter GPUs)";
+}
+
+std::string backendHint(const Spec& s) {
+    if (s.vramGB <= 0) return "CPU build with AVX2";
+    std::string n = lower(s.gpuName);
+    auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
+    if (has("nvidia") || has("geforce") || has("rtx") || has("gtx") || has("quadro"))
+        return "CUDA backend";
+    if (has("radeon") || has("amd") || has(" rx ")) return "Vulkan or ROCm/HIP backend";
+    if (has("intel") || has("arc")) return "Vulkan or SYCL backend";
+    return "Vulkan backend";
+}
+
+std::string softwareHint(const ModelInfo& m, const Spec& s) {
+    std::string t;
+    switch (m.kind) {
+        case K_LLM:
+            t = "llama.cpp, Ollama or LM Studio (GGUF " + std::string(quantOf(s).name) + ")";
+            break;
+        case K_IMAGE: t = "ComfyUI or Stable Diffusion WebUI Forge"; break;
+        case K_VIDEO: t = "ComfyUI video workflows"; break;
+        case K_AUDIO: t = "whisper.cpp / faster-whisper (speech-to-text) or Piper / XTTS (voice)"; break;
+        case K_EMBED: t = "Ollama or llama.cpp (embedding mode)"; break;
+    }
+    return t + " with " + backendHint(s);
+}
+
+std::string fmt(const char* f, double a = 0, double b = 0, double c = 0) {
+    char buf[512];
+    snprintf(buf, sizeof buf, f, a, b, c);
+    return buf;
 }
 
 }  // namespace
 
+const std::vector<Quant>& quants() {
+    static const std::vector<Quant> q = {
+        {"Q4_K_M (4-bit)", 0.606}, {"Q5_K_M (5-bit)", 0.71}, {"Q8_0 (8-bit)", 1.06},
+        {"FP16 (16-bit)", 2.0},
+    };
+    return q;
+}
+
+const std::vector<int>& contextSizes() {
+    static const std::vector<int> c = {2048, 4096, 8192, 16384, 32768, 65536, 131072};
+    return c;
+}
+
+// Approximate memory sizes and bandwidth. More specific names first.
+const std::vector<GpuPreset>& gpuPresets() {
+    static const std::vector<GpuPreset> g = {
+        {"RTX 5090", 32, 1792}, {"RTX 5080", 16, 960}, {"RTX 5070 Ti", 16, 896},
+        {"RTX 5070", 12, 672}, {"RTX 4090", 24, 1008}, {"RTX 4080 Super", 16, 736},
+        {"RTX 4080", 16, 717}, {"RTX 4070 Ti Super", 16, 672}, {"RTX 4070 Ti", 12, 504},
+        {"RTX 4070 Super", 12, 504}, {"RTX 4070", 12, 504}, {"RTX 4060 Ti", 16, 288},
+        {"RTX 4060", 8, 272}, {"RTX 3090 Ti", 24, 1008}, {"RTX 3090", 24, 936},
+        {"RTX 3080 Ti", 12, 912}, {"RTX 3080", 10, 760}, {"RTX 3070", 8, 448},
+        {"RTX 3060 Ti", 8, 448}, {"RTX 3060", 12, 360}, {"RTX 3050", 8, 224},
+        {"RTX 2080 Ti", 11, 616}, {"RTX 2080", 8, 448}, {"RTX 2070", 8, 448},
+        {"RTX 2060", 6, 336}, {"GTX 1080 Ti", 11, 484}, {"GTX 1080", 8, 320},
+        {"GTX 1070", 8, 256}, {"GTX 1660", 6, 192}, {"GTX 1650", 4, 128},
+        {"GTX 1060", 6, 192},
+        {"RX 7900 XTX", 24, 960}, {"RX 7900 XT", 20, 800}, {"RX 7800 XT", 16, 624},
+        {"RX 7700 XT", 12, 432}, {"RX 7600", 8, 288}, {"RX 6900", 16, 512},
+        {"RX 6800", 16, 512}, {"RX 6700", 12, 384}, {"RX 6600", 8, 224}, {"RX 580", 8, 256},
+        {"Arc B580", 12, 456}, {"Arc A770", 16, 560}, {"Arc A750", 8, 512},
+        {"RTX A6000", 48, 768}, {"RTX 6000 Ada", 48, 960}, {"L40S", 48, 864},
+        {"A100", 80, 2039}, {"H100", 80, 3350},
+    };
+    return g;
+}
+
 const std::vector<ModelInfo>& modelCatalog() {
+    // name, category, kind, params(B), active(B), fixed memory (GB), CPU fallback
     static const std::vector<ModelInfo> c = {
-        {"TinyLlama 1.1B (Q4)",          false, 0.7,  1.0},
-        {"Llama 3.2 3B (Q4)",            false, 2.0,  1.0},
-        {"Phi-3 mini 3.8B (Q4)",         false, 2.3,  1.0},
-        {"Mistral 7B (Q4)",              false, 4.1,  1.0},
-        {"Llama 3.1 8B (Q4)",            false, 4.9,  1.0},
-        {"Gemma 2 9B (Q4)",              false, 5.8,  1.0},
-        {"Qwen 2.5 14B (Q4)",            false, 9.0,  1.0},
-        {"Gemma 2 27B (Q4)",             false, 16.5, 1.0},
-        {"Mixtral 8x7B MoE (Q4)",        false, 26.0, 0.28},
-        {"Qwen 2.5 32B (Q4)",            false, 19.5, 1.0},
-        {"Llama 3.3 70B (Q4)",           false, 42.0, 1.0},
-        {"Llama 3.1 405B (Q4)",          false, 240.0, 1.0},
-        {"Stable Diffusion 1.5",         true,  2.5,  1.0},
-        {"Stable Diffusion XL",          true,  6.5,  1.0},
-        {"Flux.1 dev (fp8)",             true,  16.0, 1.0},
+        // Small LLMs
+        {"Qwen2.5 0.5B",              "LLM small (<=4B)", K_LLM, 0.5, 0.5, 0, true},
+        {"Gemma 3 1B",                "LLM small (<=4B)", K_LLM, 1.0, 1.0, 0, true},
+        {"TinyLlama 1.1B",            "LLM small (<=4B)", K_LLM, 1.1, 1.1, 0, true},
+        {"Llama 3.2 1B",              "LLM small (<=4B)", K_LLM, 1.2, 1.2, 0, true},
+        {"Qwen2.5 1.5B",              "LLM small (<=4B)", K_LLM, 1.5, 1.5, 0, true},
+        {"Gemma 2 2B",                "LLM small (<=4B)", K_LLM, 2.6, 2.6, 0, true},
+        {"Llama 3.2 3B",              "LLM small (<=4B)", K_LLM, 3.2, 3.2, 0, true},
+        {"Phi-3.5 mini 3.8B",         "LLM small (<=4B)", K_LLM, 3.8, 3.8, 0, true},
+        {"Phi-4 mini 3.8B",           "LLM small (<=4B)", K_LLM, 3.8, 3.8, 0, true},
+        {"Qwen3 4B",                  "LLM small (<=4B)", K_LLM, 4.0, 4.0, 0, true},
+        {"Gemma 3 4B",                "LLM small (<=4B)", K_LLM, 4.3, 4.3, 0, true},
+        // Medium LLMs
+        {"Mistral 7B v0.3",           "LLM medium (7-14B)", K_LLM, 7.2, 7.2, 0, true},
+        {"Llama 3.1 8B",              "LLM medium (7-14B)", K_LLM, 8.0, 8.0, 0, true},
+        {"Qwen3 8B",                  "LLM medium (7-14B)", K_LLM, 8.2, 8.2, 0, true},
+        {"Gemma 2 9B",                "LLM medium (7-14B)", K_LLM, 9.2, 9.2, 0, true},
+        {"Mistral Nemo 12B",          "LLM medium (7-14B)", K_LLM, 12.2, 12.2, 0, true},
+        {"Gemma 3 12B",               "LLM medium (7-14B)", K_LLM, 12.2, 12.2, 0, true},
+        {"Phi-4 14B",                 "LLM medium (7-14B)", K_LLM, 14.7, 14.7, 0, true},
+        {"Qwen2.5 14B",               "LLM medium (7-14B)", K_LLM, 14.8, 14.8, 0, true},
+        {"Qwen3 14B",                 "LLM medium (7-14B)", K_LLM, 14.8, 14.8, 0, true},
+        // Large LLMs
+        {"Mistral Small 3 24B",       "LLM large (24-35B)", K_LLM, 23.6, 23.6, 0, true},
+        {"Gemma 2 27B",               "LLM large (24-35B)", K_LLM, 27.2, 27.2, 0, true},
+        {"Gemma 3 27B",               "LLM large (24-35B)", K_LLM, 27.4, 27.4, 0, true},
+        {"Qwen2.5 32B",               "LLM large (24-35B)", K_LLM, 32.5, 32.5, 0, true},
+        {"Qwen3 32B",                 "LLM large (24-35B)", K_LLM, 32.8, 32.8, 0, true},
+        {"DeepSeek-R1-Distill 32B",   "LLM large (24-35B)", K_LLM, 32.8, 32.8, 0, true},
+        {"Command R 35B",             "LLM large (24-35B)", K_LLM, 35.0, 35.0, 0, true},
+        // Huge dense LLMs
+        {"Llama 3.3 70B",             "LLM huge (70B+)", K_LLM, 70.6, 70.6, 0, true},
+        {"Qwen2.5 72B",               "LLM huge (70B+)", K_LLM, 72.7, 72.7, 0, true},
+        {"Command R+ 104B",           "LLM huge (70B+)", K_LLM, 104, 104, 0, true},
+        {"Mistral Large 2 123B",      "LLM huge (70B+)", K_LLM, 123, 123, 0, true},
+        {"Llama 3.1 405B",            "LLM huge (70B+)", K_LLM, 405, 405, 0, true},
+        // Mixture of experts (all weights in memory, few read per token)
+        {"gpt-oss 20B (MoE)",         "LLM MoE", K_LLM, 21, 3.6, 0, true},
+        {"Qwen3 30B-A3B (MoE)",       "LLM MoE", K_LLM, 30.5, 3.3, 0, true},
+        {"Mixtral 8x7B (MoE)",        "LLM MoE", K_LLM, 46.7, 12.9, 0, true},
+        {"Llama 4 Scout 109B (MoE)",  "LLM MoE", K_LLM, 109, 17, 0, true},
+        {"gpt-oss 120B (MoE)",        "LLM MoE", K_LLM, 117, 5.1, 0, true},
+        {"Mixtral 8x22B (MoE)",       "LLM MoE", K_LLM, 141, 39, 0, true},
+        {"Qwen3 235B-A22B (MoE)",     "LLM MoE", K_LLM, 235, 22, 0, true},
+        {"Llama 4 Maverick 400B (MoE)", "LLM MoE", K_LLM, 400, 17, 0, true},
+        {"DeepSeek V3 / R1 671B (MoE)", "LLM MoE", K_LLM, 671, 37, 0, true},
+        // Coding LLMs
+        {"Qwen2.5-Coder 7B",          "LLM coding", K_LLM, 7.6, 7.6, 0, true},
+        {"Qwen2.5-Coder 14B",         "LLM coding", K_LLM, 14.8, 14.8, 0, true},
+        {"StarCoder2 15B",            "LLM coding", K_LLM, 15.5, 15.5, 0, true},
+        {"DeepSeek-Coder-V2-Lite 16B (MoE)", "LLM coding", K_LLM, 15.7, 2.4, 0, true},
+        {"Qwen2.5-Coder 32B",         "LLM coding", K_LLM, 32.8, 32.8, 0, true},
+        // Vision-language LLMs
+        {"LLaVA 1.6 Mistral 7B",      "LLM vision", K_LLM, 7.6, 7.6, 0, true},
+        {"Qwen2.5-VL 7B",             "LLM vision", K_LLM, 8.3, 8.3, 0, true},
+        {"Llama 3.2 Vision 11B",      "LLM vision", K_LLM, 10.6, 10.6, 0, true},
+        {"Qwen2.5-VL 32B",            "LLM vision", K_LLM, 33.5, 33.5, 0, true},
+        {"Llama 3.2 Vision 90B",      "LLM vision", K_LLM, 88.6, 88.6, 0, true},
+        // Image generation
+        {"Stable Diffusion 1.5",      "Image", K_IMAGE, 0.86, 0, 4, false},
+        {"Stable Diffusion XL",       "Image", K_IMAGE, 3.5, 0, 8, false},
+        {"Flux.1 dev (GGUF Q4)",      "Image", K_IMAGE, 12, 0, 9, false},
+        {"Stable Diffusion 3.5 Medium", "Image", K_IMAGE, 2.5, 0, 10, false},
+        {"Flux.1 dev (fp8)",          "Image", K_IMAGE, 12, 0, 16, false},
+        {"Stable Diffusion 3.5 Large", "Image", K_IMAGE, 8, 0, 18, false},
+        {"Flux.1 dev (fp16)",         "Image", K_IMAGE, 12, 0, 24, false},
+        // Video generation
+        {"Wan 2.1 1.3B",              "Video", K_VIDEO, 1.3, 0, 8, false},
+        {"Stable Video Diffusion",    "Video", K_VIDEO, 1.5, 0, 16, false},
+        {"CogVideoX 5B",              "Video", K_VIDEO, 5, 0, 18, false},
+        {"HunyuanVideo 13B",          "Video", K_VIDEO, 13, 0, 24, false},
+        {"Wan 2.1 14B",               "Video", K_VIDEO, 14, 0, 28, false},
+        // Speech / audio
+        {"Whisper tiny",              "Audio", K_AUDIO, 0.04, 0, 1, true},
+        {"Whisper base",              "Audio", K_AUDIO, 0.07, 0, 1, true},
+        {"Whisper small",             "Audio", K_AUDIO, 0.24, 0, 2, true},
+        {"XTTS v2 (voice cloning)",   "Audio", K_AUDIO, 0.47, 0, 4, true},
+        {"Whisper medium",            "Audio", K_AUDIO, 0.77, 0, 5, true},
+        {"MusicGen medium",           "Audio", K_AUDIO, 1.5, 0, 8, false},
+        {"Whisper large-v3",          "Audio", K_AUDIO, 1.55, 0, 10, true},
+        // Embeddings
+        {"nomic-embed-text",          "Embedding", K_EMBED, 0.14, 0, 1, true},
+        {"bge-m3",                    "Embedding", K_EMBED, 0.57, 0, 2, true},
     };
     return c;
+}
+
+const char* kindText(Kind k) {
+    switch (k) {
+        case K_LLM: return "LLM";
+        case K_IMAGE: return "Image";
+        case K_VIDEO: return "Video";
+        case K_AUDIO: return "Audio";
+        default: return "Embedding";
+    }
 }
 
 double estimateGpuBandwidth(const Spec& s) {
     if (s.vramGB <= 0) return 0;
     if (!s.vramOverridden) {
-        for (const auto& e : GPU_TABLE)
-            if (containsNoCase(s.gpuName, e.key)) return e.gbs;
+        for (const auto& e : gpuPresets())
+            if (containsNoCase(s.gpuName, e.name)) return e.bandwidth;
     }
     return std::min(1000.0, 100.0 + 25.0 * s.vramGB);  // rough guess from VRAM size
 }
 
 double estimateCpuBandwidth(const Spec& s) {
-    double bw = std::min(60.0, std::max(10.0, s.cores * 5.0));
+    double bw;
+    if (s.ramBw > 0)
+        bw = std::min(s.ramBw, std::max(15.0, s.cores * 9.0));  // few cores cannot saturate RAM
+    else
+        bw = std::min(60.0, std::max(10.0, s.cores * 5.0));
     if (!s.avx2) bw *= 0.6;
     return bw;
 }
@@ -89,35 +266,42 @@ const char* levelText(Level l) {
     }
 }
 
-static Level levelFor(double tps) {
-    if (tps >= SMOOTH_TPS) return LV_SMOOTH;
-    if (tps >= USABLE_TPS) return LV_USABLE;
-    return LV_SLOW;
-}
-
 Verdict evaluate(const ModelInfo& m, const Spec& s) {
     Verdict v;
     v.mode = "-";
-    v.needGB = needFor(m);
-    const double read = m.sizeGB * m.activeFrac;
-    const double gpuBw = estimateGpuBandwidth(s) * EFFICIENCY;
-    const double cpuBw = estimateCpuBandwidth(s) * EFFICIENCY;
+    v.needGB = memoryNeeded(m, s);
+    v.diskGB = weightsGB(m, s);
     const double freeRam = s.ramGB - OS_RESERVE_GB;
+    const double gpuBw = estimateGpuBandwidth(s) * EFFICIENCY;
 
-    if (s.vramGB > 0 && v.needGB <= s.vramGB) {
-        v.mode = "GPU";
-        if (m.image) {
-            v.level = LV_SMOOTH;
-        } else {
-            v.tps = gpuBw / read;
-            v.level = levelFor(v.tps);
+    if (m.kind != K_LLM) {
+        if (s.vramGB > 0 && v.needGB <= s.vramGB) {
+            v.mode = "GPU";
+            double bw = estimateGpuBandwidth(s);
+            v.level = bw >= 250 ? LV_SMOOTH : (bw >= 120 ? LV_USABLE : LV_SLOW);
+        } else if (m.cpuOk && v.needGB <= freeRam) {
+            v.mode = "CPU";
+            if (m.kind == K_IMAGE || m.kind == K_VIDEO)
+                v.level = LV_SLOW;
+            else if (v.needGB <= 3)
+                v.level = s.cores >= 6 ? LV_SMOOTH : LV_USABLE;
+            else
+                v.level = s.cores >= 8 ? LV_USABLE : LV_SLOW;
         }
         return v;
     }
-    if (m.image) return v;  // image models are only offered on GPU
 
+    const double read = readPerToken(m, s);
+    const double cpuBw = estimateCpuBandwidth(s) * EFFICIENCY;
+
+    if (s.vramGB > 0 && v.needGB <= s.vramGB) {
+        v.mode = "GPU";
+        v.tps = gpuBw / read;
+        v.level = levelFor(v.tps);
+        return v;
+    }
     if (s.vramGB >= 2.0 && v.needGB <= s.vramGB + freeRam) {
-        double f = std::min(1.0, std::max(0.0, (s.vramGB - 0.8) / m.sizeGB));
+        double f = std::min(1.0, std::max(0.0, (s.vramGB - 0.8) / (v.needGB - 0.6)));
         double t = f * read / gpuBw + (1.0 - f) * read / cpuBw;
         v.mode = "GPU+CPU";
         v.tps = 1.0 / t;
@@ -132,74 +316,84 @@ Verdict evaluate(const ModelInfo& m, const Spec& s) {
     return v;
 }
 
-static const char* gpuTier(double vram) {
-    if (vram <= 4)  return "GTX 1650 / RTX 3050 4GB class";
-    if (vram <= 6)  return "RTX 2060 / RTX 3050 6GB class";
-    if (vram <= 8)  return "RTX 3060 Ti / RTX 4060 / RX 7600 class";
-    if (vram <= 12) return "RTX 3060 12GB / RTX 4070 / RX 7700 XT class";
-    if (vram <= 16) return "RTX 4060 Ti 16GB / RTX 4080 / RX 7800 XT class";
-    if (vram <= 24) return "RTX 3090 / RTX 4090 / RX 7900 XTX class";
-    if (vram <= 32) return "RTX 5090 class";
-    if (vram <= 48) return "2x 24GB GPUs or RTX A6000 / RTX 6000 Ada class";
-    return "multi-GPU workstation or datacenter GPUs (A100/H100)";
-}
-
 std::string recommend(const ModelInfo& m, const Spec& s) {
-    char buf[512];
     std::string out;
     Verdict v = evaluate(m, s);
-    const double need = needFor(m);
+    const double need = v.needGB;
 
-    snprintf(buf, sizeof buf, "Target: %s\r\nMemory needed to load: %.1f GB (weights + context)\r\n\r\n",
-             m.name, need);
-    out += buf;
+    out += std::string(m.name) + "   [" + m.category + "]\r\n";
+    if (m.kind == K_LLM)
+        out += fmt("Memory needed: %.1f GB  (weights %.1f GB + context cache + overhead)\r\n",
+                   need, v.diskGB) +
+               "Settings: " + quantOf(s).name + ", context " + std::to_string(s.ctx) + " tokens\r\n";
+    else
+        out += fmt("Memory needed: about %.0f GB (typical default precision)\r\n", need);
 
-    snprintf(buf, sizeof buf, "Selected hardware: %d cores, %.0f GB RAM, %.0f GB VRAM\r\n",
-             s.cores, s.ramGB, s.vramGB);
-    out += buf;
-    snprintf(buf, sizeof buf, "Result: %s (%s)", levelText(v.level), v.mode.c_str());
-    out += buf;
-    if (v.tps > 0) {
-        snprintf(buf, sizeof buf, ", about %.1f tokens/s", v.tps);
-        out += buf;
-    }
+    out += fmt("Your selection: %.0f CPU cores, %.0f GB RAM, ", s.cores, s.ramGB) +
+           fmt("%.0f GB VRAM", s.vramGB) + "\r\n";
+    out += std::string("Result: ") + levelText(v.level) + " (" + v.mode + ")";
+    if (v.tps > 0) out += fmt(", about %.1f tokens/s", v.tps);
     out += "\r\n\r\n";
 
     if (v.level == LV_SMOOTH) {
-        out += "Your selected hardware is enough to run this smoothly.\r\n";
+        out += "Your hardware is enough to run this smoothly.\r\n";
+        out += "Software: " + softwareHint(m, s) + "\r\n";
         return out;
     }
 
-    out += "To run it smoothly you need ONE of:\r\n";
+    out += "MINIMUM HARDWARE TO RUN SMOOTHLY (choose one):\r\n";
     const double vramNeed = std::ceil(need);
-    snprintf(buf, sizeof buf, "  A) GPU: at least %.0f GB VRAM (%s)", vramNeed, gpuTier(vramNeed));
-    out += buf;
-    if (s.vramGB < need) {
-        snprintf(buf, sizeof buf, " - missing %.0f GB", vramNeed - s.vramGB);
-        out += buf;
-    }
+    double bwNeed = 0;
+    if (m.kind == K_LLM) bwNeed = SMOOTH_TPS * readPerToken(m, s) / EFFICIENCY;
+
+    out += fmt("  A) GPU with at least %.0f GB VRAM", vramNeed) + " (" + gpuTier(vramNeed) + ")";
+    if (s.vramGB < need) out += fmt(" - you are missing %.0f GB", vramNeed - s.vramGB);
     out += "\r\n";
-    if (!m.image) {
-        const double bwNeed = SMOOTH_TPS * m.sizeGB * m.activeFrac / EFFICIENCY;
-        snprintf(buf, sizeof buf, "     with memory bandwidth of about %.0f GB/s or more.\r\n", bwNeed);
-        out += buf;
+    if (m.kind == K_LLM) {
+        out += fmt("     memory bandwidth about %.0f GB/s or more.\r\n", bwNeed);
         const double ramNeed = std::ceil(need + OS_RESERVE_GB);
-        snprintf(buf, sizeof buf,
-                 "  B) CPU only: at least %.0f GB RAM (more for headroom)", ramNeed);
-        out += buf;
-        if (s.ramGB < ramNeed) {
-            snprintf(buf, sizeof buf, " - missing %.0f GB", ramNeed - s.ramGB);
-            out += buf;
-        }
-        snprintf(buf, sizeof buf,
-                 "\r\n     CPU/RAM bandwidth of about %.0f GB/s is needed for smooth speed; typical\r\n"
-                 "     dual-channel desktops reach 40-60 GB/s, so large models are slow on CPU.\r\n",
-                 bwNeed);
-        out += buf;
+        out += fmt("  B) CPU only: at least %.0f GB RAM", ramNeed);
+        if (s.ramGB < ramNeed) out += fmt(" - you are missing %.0f GB", ramNeed - s.ramGB);
+        out += fmt("\r\n     and RAM bandwidth about %.0f GB/s (dual-channel DDR5 is ~90, ", bwNeed);
+        out += "8-12 channel server boards 300+).\r\n";
+        if (bwNeed > 100) out += "     This is only realistic on a server/workstation platform.\r\n";
+    } else if (m.cpuOk) {
+        out += fmt("  B) CPU only: %.0f GB RAM and 8+ cores (works, but slower).\r\n",
+                   std::ceil(need + OS_RESERVE_GB));
     } else {
-        out += "     (image models need a GPU; also keep 16 GB+ system RAM).\r\n";
+        out += "     Strong GPU recommended (250+ GB/s memory bandwidth) and 16 GB+ system RAM.\r\n";
     }
 
-    out += "\r\nEstimates are approximate. Actual speed depends on the engine, quantisation and context size.\r\n";
+    // Smallest upgrade that makes this smooth, starting from the current hardware.
+    out += "\r\nCHEAPEST UPGRADE FROM YOUR CURRENT HARDWARE:\r\n";
+    static const double VRAM_TIERS[] = {4, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64, 80, 96, 128, 192, 256};
+    static const double RAM_TIERS[] = {8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512};
+    bool any = false;
+    for (double t : VRAM_TIERS) {
+        if (t <= s.vramGB) continue;
+        Spec u = s;
+        u.vramGB = t;
+        u.vramOverridden = true;
+        if (evaluate(m, u).level == LV_SMOOTH) {
+            out += fmt("  GPU: upgrade to %.0f GB VRAM", t) +
+                   fmt(" (~%.0f GB/s class)", estimateGpuBandwidth(u)) + " - " + gpuTier(t) + "\r\n";
+            any = true;
+            break;
+        }
+    }
+    for (double t : RAM_TIERS) {
+        if (t <= s.ramGB) continue;
+        Spec u = s;
+        u.ramGB = t;
+        if (evaluate(m, u).level == LV_SMOOTH) {
+            out += fmt("  RAM: upgrade to %.0f GB\r\n", t);
+            any = true;
+            break;
+        }
+    }
+    if (!any) out += "  No single upgrade of RAM or VRAM is enough; see the minimum hardware above.\r\n";
+
+    out += "\r\nSoftware: " + softwareHint(m, s) + "\r\n";
+    out += "Estimates are approximate; real speed depends on engine, quantisation and context.\r\n";
     return out;
 }

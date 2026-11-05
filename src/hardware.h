@@ -16,6 +16,9 @@ struct HwInfo {
     int logicalCores = 0;
     bool avx = false, avx2 = false, avx512 = false;
     double ramGB = 0;
+    int ramSpeedMTs = 0;     // from SMBIOS, 0 if unknown
+    int ramModules = 0;
+    double ramBwGBs = 0;     // estimated peak bandwidth, 0 if unknown
     std::vector<GpuInfo> gpus;
 
     // Index of the GPU with most dedicated VRAM, or -1.

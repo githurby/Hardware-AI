@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <dxgi.h>
 #include <cpuid.h>
+#include <algorithm>
 #include <cstring>
 
 static std::string wideToUtf8(const wchar_t* w) {
@@ -74,6 +75,41 @@ static void detectRam(HwInfo& hw) {
     if (GlobalMemoryStatusEx(&ms)) hw.ramGB = ms.ullTotalPhys / (1024.0 * 1024.0 * 1024.0);
 }
 
+// Reads memory module speed/count from the SMBIOS table (type 17 entries).
+static void detectRamSpeed(HwInfo& hw) {
+    UINT size = GetSystemFirmwareTable(0x52534D42, 0, nullptr, 0);
+    if (size < 8) return;
+    std::vector<BYTE> buf(size);
+    if (GetSystemFirmwareTable(0x52534D42, 0, buf.data(), size) != size) return;
+    DWORD len = 0;
+    std::memcpy(&len, &buf[4], 4);
+    const BYTE* p = buf.data() + 8;
+    const BYTE* end = p + std::min<size_t>(len, size - 8);
+    int modules = 0, speed = 0;
+    while (p + 4 <= end) {
+        BYTE type = p[0], l = p[1];
+        if (type == 127 || l < 4 || p + l > end) break;
+        if (type == 17 && l >= 0x16) {
+            WORD sz = 0, sp = 0, cfg = 0;
+            std::memcpy(&sz, p + 0x0C, 2);
+            std::memcpy(&sp, p + 0x15, 2);
+            if (l >= 0x22) std::memcpy(&cfg, p + 0x20, 2);
+            if (sz != 0) {
+                modules++;
+                speed = std::max(speed, (int)(cfg ? cfg : sp));
+            }
+        }
+        const BYTE* q = p + l;
+        while (q + 1 < end && !(q[0] == 0 && q[1] == 0)) ++q;
+        p = q + 2;
+    }
+    if (modules > 0 && speed > 0) {
+        hw.ramModules = modules;
+        hw.ramSpeedMTs = speed;
+        hw.ramBwGBs = speed * 8.0 * std::min(modules, 2) / 1000.0;
+    }
+}
+
 static void detectGpus(HwInfo& hw) {
     typedef HRESULT(WINAPI * CreateFactoryFn)(REFIID, void**);
     HMODULE dll = LoadLibraryA("dxgi.dll");
@@ -103,6 +139,7 @@ HwInfo detectHardware() {
     HwInfo hw;
     detectCpu(hw);
     detectRam(hw);
+    detectRamSpeed(hw);
     detectGpus(hw);
     return hw;
 }

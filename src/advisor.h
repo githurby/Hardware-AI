@@ -6,19 +6,38 @@
 
 // Hardware profile used for the calculations (detected or "what-if").
 struct Spec {
-    int cores = 4;          // physical CPU cores
+    int cores = 4;           // physical CPU cores
     bool avx2 = true;
     double ramGB = 16;
+    double ramBw = 0;        // system RAM bandwidth in GB/s, 0 = estimate from cores
     double vramGB = 0;
     std::string gpuName;
-    bool vramOverridden = false;  // true: ignore GPU name table, estimate from VRAM
+    bool vramOverridden = false;  // true: VRAM differs from the named GPU, estimate bandwidth
+    int quant = 0;           // index into quants()
+    int ctx = 4096;          // context length in tokens
 };
+
+enum Kind { K_LLM, K_IMAGE, K_VIDEO, K_AUDIO, K_EMBED };
 
 struct ModelInfo {
     const char* name;
-    bool image;          // image-generation model (GPU only)
-    double sizeGB;       // size in memory (4-bit quantised for LLMs)
-    double activeFrac;   // fraction of weights read per token (MoE < 1)
+    const char* category;
+    Kind kind;
+    double paramsB;    // total parameters in billions (display / LLM size)
+    double activeB;    // parameters read per token (MoE < paramsB), LLM only
+    double fixedGB;    // memory needed for non-LLM models
+    bool cpuOk;        // can fall back to CPU
+};
+
+struct Quant {
+    const char* name;
+    double bytes;      // bytes per parameter
+};
+
+struct GpuPreset {
+    const char* name;
+    double vramGB;
+    double bandwidth;  // GB/s
 };
 
 enum Level { LV_NO = 0, LV_SLOW = 1, LV_USABLE = 2, LV_SMOOTH = 3 };
@@ -27,17 +46,23 @@ struct Verdict {
     Level level = LV_NO;
     std::string mode;    // "GPU", "GPU+CPU", "CPU", "-"
     double tps = 0;      // estimated tokens/second (LLMs only)
-    double needGB = 0;   // memory needed to load the model
+    double needGB = 0;   // memory needed to load and run the model
+    double diskGB = 0;   // approximate download size
 };
 
 const std::vector<ModelInfo>& modelCatalog();
+const std::vector<Quant>& quants();
+const std::vector<GpuPreset>& gpuPresets();
+const std::vector<int>& contextSizes();
+
 double estimateGpuBandwidth(const Spec& s);  // GB/s
 double estimateCpuBandwidth(const Spec& s);  // GB/s
 Verdict evaluate(const ModelInfo& m, const Spec& s);
 const char* levelText(Level l);
+const char* kindText(Kind k);
 
-// Text describing what hardware is needed to run model m smoothly,
-// compared with spec s.
+// Explains what hardware model m needs to run smoothly and the cheapest upgrade
+// from spec s, plus suggested software.
 std::string recommend(const ModelInfo& m, const Spec& s);
 
 #endif
