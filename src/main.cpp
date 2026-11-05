@@ -2,6 +2,7 @@
 #include <commctrl.h>
 #include <commdlg.h>
 #include <dwmapi.h>
+#include <urlmon.h>
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,7 @@
 
 #include "advisor.h"
 #include "hardware.h"
+#include "i18n.h"
 
 enum {
     ID_HWTEXT = 100, ID_REDETECT, ID_EXPORT,
@@ -26,7 +28,7 @@ enum {
     ID_GRP_HW, ID_GRP_WHATIF, ID_GRP_OPT,
     ID_L1, ID_L2, ID_L3, ID_L4, ID_L5, ID_L6, ID_L7, ID_L8,
     ID_BENCH, ID_SAVEPROF, ID_LOADPROF, ID_COPYCMD, ID_ALLGPU, ID_FAVONLY, ID_CMP, ID_CMPPRESET,
-    ID_CMPRAM, ID_L9
+    ID_CMPRAM, ID_L9, ID_LANG, ID_UPDATE
 };
 
 static HINSTANCE g_inst;
@@ -46,6 +48,8 @@ static int g_customAdded = 0;
 static HwInfo g_hw;
 static Spec g_spec;
 static std::vector<std::string> g_cats;
+static HWND g_lang = nullptr;
+static std::map<HWND, std::string> g_enText;  // original English control texts
 static std::vector<int> g_view;        // catalog indices currently shown
 static std::vector<Verdict> g_verd;    // verdict per catalog index
 static int g_sel = -1;                 // selected catalog index
@@ -108,6 +112,8 @@ static std::string hardwareText() {
     if (g_diskFree > 0) t += fmt("Disk: %.0f GB free for downloads\r\n", g_diskFree);
     return t;
 }
+
+static void showHw() { SetWindowTextA(g_hwText, tr(hardwareText()).c_str()); }
 
 static std::string paramsText(const ModelInfo& m) {
     if (m.paramsB <= 0) return "-";
@@ -200,14 +206,14 @@ static void sortView() {
 static void refreshRecommendation() {
     const auto& cat = modelCatalog();
     if (g_sel < 0 || g_sel >= (int)cat.size())
-        SetWindowTextA(g_rec, "Click a model in the list to see the minimum hardware needed to run it smoothly.");
+        SetWindowTextA(g_rec, tr("Click a model in the list to see the minimum hardware needed to run it smoothly.").c_str());
     else
     {
         std::string t = recommend(cat[g_sel], g_spec);
         if (cat[g_sel].kind == K_LLM && evaluate(cat[g_sel], g_spec).mode != "-")
             t += "\r\nSuggested llama.cpp command (button \"Copy run command\" copies it):\r\n" +
                  runCommand(cat[g_sel], g_spec);
-        SetWindowTextA(g_rec, t.c_str());
+        SetWindowTextA(g_rec, tr(t).c_str());
     }
 }
 
@@ -286,16 +292,16 @@ static void refreshList() {
             SendMessageA(g_list, LVM_SETITEMTEXTA, r, (LPARAM)&sub);
         };
         set(1, cat[i].category);
-        set(2, capabilities(cat[i]));
+        set(2, trTags(capabilities(cat[i])));
         set(3, paramsText(cat[i]));
         set(4, fmt("%.1f GB", v.needGB));
-        set(5, levelText(v.level));
+        set(5, tr(levelText(v.level)));
         set(6, v.mode);
         set(7, v.tps > 0 ? fmt("%.1f", v.tps) : std::string("-"));
         set(8, fmt("%.1f GB", v.diskGB));
         if (cmp) {
             const Verdict& vb = g_verdB[i];
-            set(9, std::string(levelText(vb.level)) + (vb.tps > 0 ? fmt("  %.1f tok/s", vb.tps) : ""));
+            set(9, tr(levelText(vb.level)) + (vb.tps > 0 ? fmt("  %.1f tok/s", vb.tps) : ""));
         }
         if (i == g_sel) {
             ListView_SetItemState(g_list, (int)r, LVIS_SELECTED | LVIS_FOCUSED,
@@ -306,12 +312,12 @@ static void refreshList() {
     SendMessage(g_list, WM_SETREDRAW, TRUE, 0);
     g_updating = false;
 
-    std::string sum = fmt("Showing %d of %d.   Smooth: %d   Usable: %d   Slow: %d   Cannot run: %d",
+    std::string sum = fmt(tr("Showing %d of %d.   Smooth: %d   Usable: %d   Slow: %d   Cannot run: %d").c_str(),
                           (int)g_view.size(), (int)cat.size(), cnt[LV_SMOOTH], cnt[LV_USABLE],
                           cnt[LV_SLOW], cnt[LV_NO]);
     if (best >= 0)
-        sum += fmt("   |   Best smooth LLM: %s (%.1f tok/s)", cat[best].name, g_verd[best].tps);
-    if (g_customAdded > 0) sum += fmt("   |   +%d custom models", g_customAdded);
+        sum += fmt(tr("   |   Best smooth LLM: %s (%.1f tok/s)").c_str(), cat[best].name, g_verd[best].tps);
+    if (g_customAdded > 0) sum += fmt(tr("   |   +%d custom models").c_str(), g_customAdded);
     SetWindowTextA(g_summary, sum.c_str());
 }
 
@@ -412,7 +418,7 @@ static void runBenchmark() {
     double bw = benchmarkRamBandwidth(std::max(2, g_hw.physicalCores));
     SetCursor(LoadCursor(nullptr, IDC_ARROW));
     if (bw <= 0) {
-        MessageBoxA(g_hwnd, "The benchmark could not run (not enough free memory?).", "Hardware-AI",
+        MessageBoxA(g_hwnd, tr("The benchmark could not run (not enough free memory?).").c_str(), "Hardware-AI",
                     MB_ICONWARNING);
         return;
     }
@@ -420,20 +426,20 @@ static void runBenchmark() {
     g_spec.ramBw = bw;
     g_spec.ramMeasured = true;
     setEditNum(g_edRamBw, bw);
-    SetWindowTextA(g_hwText, hardwareText().c_str());
+    showHw();
     refreshAll();
 }
 
 static void copyRunCommand() {
     const auto& cat = modelCatalog();
     if (g_sel < 0 || g_sel >= (int)cat.size()) {
-        MessageBoxA(g_hwnd, "Select a model in the list first.", "Hardware-AI", MB_ICONINFORMATION);
+        MessageBoxA(g_hwnd, tr("Select a model in the list first.").c_str(), "Hardware-AI", MB_ICONINFORMATION);
         return;
     }
     std::string cmd = runCommand(cat[g_sel], g_spec);
     while (!cmd.empty() && (cmd.back() == '\r' || cmd.back() == '\n')) cmd.pop_back();
     copyToClipboard(cmd);
-    MessageBoxA(g_hwnd, ("Copied to clipboard:\n\n" + cmd).c_str(), "Hardware-AI", MB_ICONINFORMATION);
+    MessageBoxA(g_hwnd, (tr("Copied to clipboard:\n\n") + cmd).c_str(), "Hardware-AI", MB_ICONINFORMATION);
 }
 
 static void saveProfile() {
@@ -449,7 +455,7 @@ static void saveProfile() {
     if (!GetSaveFileNameA(&ofn)) return;
     std::ofstream f(path);
     if (!f) {
-        MessageBoxA(g_hwnd, "Cannot write the file.", "Hardware-AI", MB_ICONERROR);
+        MessageBoxA(g_hwnd, tr("Cannot write the file.").c_str(), "Hardware-AI", MB_ICONERROR);
         return;
     }
     f << "cores=" << g_spec.cores << "\nram=" << g_spec.ramGB << "\nrambw=" << g_spec.ramBw
@@ -477,7 +483,7 @@ static void loadProfile() {
         if (e != std::string::npos) kv[line.substr(0, e)] = line.substr(e + 1);
     }
     if (!kv.count("cores") || !kv.count("ram")) {
-        MessageBoxA(g_hwnd, "This is not a valid profile file.", "Hardware-AI", MB_ICONWARNING);
+        MessageBoxA(g_hwnd, tr("This is not a valid profile file.").c_str(), "Hardware-AI", MB_ICONWARNING);
         return;
     }
     auto num = [&](const char* k, double d) { return kv.count(k) ? atof(kv[k].c_str()) : d; };
@@ -508,7 +514,7 @@ static void detectAndShow() {
     g_hw = detectHardware();
     g_diskFree = freeDiskGB(exeDir());
     g_spec = specFromDetected();
-    SetWindowTextA(g_hwText, hardwareText().c_str());
+    showHw();
     fillInputs();
     refreshAll();
     SetCursor(LoadCursor(nullptr, IDC_ARROW));
@@ -528,19 +534,19 @@ static void exportReport() {
 
     std::ofstream f(path, std::ios::binary);
     if (!f) {
-        MessageBoxA(g_hwnd, "Cannot write the file.", "Hardware-AI", MB_ICONERROR);
+        MessageBoxA(g_hwnd, tr("Cannot write the file.").c_str(), "Hardware-AI", MB_ICONERROR);
         return;
     }
     const auto& cat = modelCatalog();
-    f << "Hardware-AI report\r\n==================\r\n\r\n" << hardwareText() << "\r\n";
-    f << fmt("Used for calculation: %d cores, %.0f GB RAM, %.0f GB VRAM, %s, context %d\r\n\r\n",
+    f << tr("Hardware-AI report") << "\r\n==================\r\n\r\n" << tr(hardwareText()) << "\r\n";
+    f << fmt(tr("Used for calculation: %d cores, %.0f GB RAM, %.0f GB VRAM, %s, context %d\r\n\r\n").c_str(),
              g_spec.cores, g_spec.ramGB, g_spec.vramGB, quants()[g_spec.quant].name, g_spec.ctx);
-    f << fmt("%-34s %-20s %-24s %9s %10s  %-10s %-8s %8s\r\n", "Model", "Category", "Can do", "Params", "Memory",
-             "Result", "Mode", "tok/s");
+    f << fmt("%-34s %-20s %-24s %9s %10s  %-10s %-8s %8s\r\n", tr("Model").c_str(), tr("Category").c_str(), tr("Can do").c_str(), tr("Params").c_str(), tr("Memory").c_str(),
+             tr("Result").c_str(), tr("Mode").c_str(), "tok/s");
     for (size_t i = 0; i < cat.size(); ++i) {
         const Verdict& v = g_verd[i];
         f << fmt("%-34s %-20s %-24s %9s %7.1f GB  %-10s %-8s %8s\r\n", cat[i].name,
-                 cat[i].category, capabilities(cat[i]).c_str(), paramsText(cat[i]).c_str(), v.needGB, levelText(v.level), v.mode.c_str(),
+                 cat[i].category, trTags(capabilities(cat[i])).c_str(), paramsText(cat[i]).c_str(), v.needGB, tr(levelText(v.level)).c_str(), v.mode.c_str(),
                  v.tps > 0 ? fmt("%.1f", v.tps).c_str() : "-");
     }
     if (g_sel >= 0) f << "\r\n---\r\n" << recommend(cat[g_sel], g_spec);
@@ -597,7 +603,7 @@ static void layout(int w, int h) {
     place(ID_ALLGPU, x + S(588), cy, S(150), ctlH);
     y += S(98);
 
-    place(ID_GRP_OPT, m, y, w - 2 * m, S(92));
+    place(ID_GRP_OPT, m, y, w - 2 * m, S(124));
     x = m + S(10);
     cy = y + S(22);
     place(ID_L6, x, cy + S(2), S(48), lblH);        place(ID_QUANT, x + S(50), cy, S(130), S(200));
@@ -615,7 +621,10 @@ static void layout(int w, int h) {
     place(ID_CMPPRESET, x + S(294), cy, S(240), S(300));
     place(ID_L9, x + S(546), cy + S(2), S(66), lblH);
     place(ID_CMPRAM, x + S(616), cy, S(58), ctlH);
-    y += S(98);
+    cy += S(32);
+    place(ID_LANG, x, cy, S(130), ctlH);
+    place(ID_UPDATE, x + S(160), cy - S(1), S(220), S(26));
+    y += S(130);
 
     const int recH = S(170);
     int listH = std::max(S(100), h - y - recH - S(30) - 2 * m);
@@ -624,6 +633,27 @@ static void layout(int w, int h) {
     MoveWindow(g_summary, m, y, w - 2 * m, S(20), TRUE);
     y += S(24);
     MoveWindow(g_rec, m, y, w - 2 * m, std::max(S(60), h - y - m), TRUE);
+}
+
+static const char* const COLS[] = {"AI engine / model", "Category", "Can do", "Params", "Memory needed",
+                                   "Result", "Mode", "Est. tokens/s", "Download", "Compare"};
+
+static void fillCategories() {
+    std::string keep;
+    int cur = (int)SendMessage(g_cbCat, CB_GETCURSEL, 0, 0);
+    if (cur > 0 && cur - 1 < (int)g_cats.size()) keep = g_cats[cur - 1];
+    g_cats.clear();
+    for (const auto& m : modelCatalog())
+        if (std::find(g_cats.begin(), g_cats.end(), m.category) == g_cats.end())
+            g_cats.push_back(m.category);
+    SendMessage(g_cbCat, CB_RESETCONTENT, 0, 0);
+    SendMessageA(g_cbCat, CB_ADDSTRING, 0, (LPARAM)tr("All categories").c_str());
+    int sel = 0;
+    for (size_t i = 0; i < g_cats.size(); ++i) {
+        SendMessageA(g_cbCat, CB_ADDSTRING, 0, (LPARAM)g_cats[i].c_str());
+        if (g_cats[i] == keep) sel = (int)i + 1;
+    }
+    SendMessage(g_cbCat, CB_SETCURSEL, sel, 0);
 }
 
 static void createControls() {
@@ -672,14 +702,12 @@ static void createControls() {
     mk("STATIC", "Category:", 0, ID_L8);
     g_cbCat = mk("COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, ID_CATF);
     SendMessageA(g_cbCat, CB_ADDSTRING, 0, (LPARAM) "All categories");
-    for (const auto& m : modelCatalog())
-        if (std::find(g_cats.begin(), g_cats.end(), m.category) == g_cats.end())
-            g_cats.push_back(m.category);
-    for (const auto& c : g_cats) SendMessageA(g_cbCat, CB_ADDSTRING, 0, (LPARAM)c.c_str());
-    SendMessage(g_cbCat, CB_SETCURSEL, 0, 0);
+    fillCategories();
     g_hide = mk("BUTTON", "Hide \"Cannot run\"", BS_AUTOCHECKBOX | WS_TABSTOP, ID_HIDE);
     g_dark = mk("BUTTON", "Dark mode", BS_AUTOCHECKBOX | WS_TABSTOP, ID_DARK);
     g_favOnly = mk("BUTTON", "Favorites only", BS_AUTOCHECKBOX | WS_TABSTOP, ID_FAVONLY);
+    g_lang = mk("BUTTON", "Portugu\xEAs", BS_AUTOCHECKBOX | WS_TABSTOP, ID_LANG);
+    mk("BUTTON", "Update models online", BS_PUSHBUTTON | WS_TABSTOP, ID_UPDATE);
     g_cmp = mk("BUTTON", "Compare with:", BS_AUTOCHECKBOX | WS_TABSTOP, ID_CMP);
     g_cbCmp = mk("COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, ID_CMPPRESET);
     SendMessageA(g_cbCmp, CB_ADDSTRING, 0, (LPARAM) "No GPU (CPU only)");
@@ -696,8 +724,7 @@ static void createControls() {
     g_list = mk(WC_LISTVIEWA, "", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_TABSTOP,
                 ID_LIST, WS_EX_CLIENTEDGE);
     ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
-    const char* cols[] = {"AI engine / model", "Category", "Can do", "Params", "Memory needed",
-                          "Result", "Mode", "Est. tokens/s", "Download", "Compare"};
+    const char* const* cols = COLS;
     const int widths[] = {S(190), S(110), S(140), S(62), S(100), S(80), S(68), S(92), S(84), 0};
     for (int i = 0; i < 10; ++i) {
         LVCOLUMNA c = {};
@@ -711,10 +738,132 @@ static void createControls() {
     g_rec = mk("EDIT", "", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, ID_REC,
                WS_EX_CLIENTEDGE);
 
+    EnumChildWindows(
+        g_hwnd,
+        [](HWND c, LPARAM) -> BOOL {
+            char cls[32], t[256];
+            GetClassNameA(c, cls, sizeof cls);
+            int id = GetDlgCtrlID(c);
+            if ((!_stricmp(cls, "Button") || !_stricmp(cls, "Static")) && id != ID_HWTEXT &&
+                id != ID_SUMMARY && id != ID_LANG) {
+                GetWindowTextA(c, t, sizeof t);
+                if (t[0]) g_enText[c] = t;
+            }
+            return TRUE;
+        },
+        0);
+
     HFONT font = g_font;
     EnumChildWindows(
         g_hwnd, [](HWND c, LPARAM f) -> BOOL { SendMessage(c, WM_SETFONT, f, TRUE); return TRUE; },
         (LPARAM)font);
+}
+
+static void retitleCombo(HWND cb, int idx, const std::string& text) {
+    int sel = (int)SendMessage(cb, CB_GETCURSEL, 0, 0);
+    SendMessage(cb, CB_DELETESTRING, idx, 0);
+    SendMessageA(cb, CB_INSERTSTRING, idx, (LPARAM)text.c_str());
+    SendMessage(cb, CB_SETCURSEL, sel, 0);
+}
+
+static void applyLanguage() {
+    for (const auto& kv : g_enText) SetWindowTextA(kv.first, tr(kv.second).c_str());
+    for (int i = 0; i < 10; ++i) {
+        std::string t = tr(COLS[i]);
+        LVCOLUMNA c = {};
+        c.mask = LVCF_TEXT;
+        c.pszText = (char*)t.c_str();
+        SendMessageA(g_list, LVM_SETCOLUMNA, i, (LPARAM)&c);
+    }
+    retitleCombo(g_cbPreset, 0, tr("Detected GPU (as found)"));
+    retitleCombo(g_cbPreset, 1, tr("No GPU (CPU only)"));
+    retitleCombo(g_cbCmp, 0, tr("No GPU (CPU only)"));
+    fillCategories();
+    showHw();
+    refreshAll();
+}
+
+static bool loadLanguageSetting() {
+    DWORD v = 0, sz = sizeof v, type = 0;
+    HKEY k;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, REG_KEY, 0, KEY_QUERY_VALUE, &k) == ERROR_SUCCESS) {
+        LONG r = RegQueryValueExA(k, "Language", nullptr, &type, (BYTE*)&v, &sz);
+        RegCloseKey(k);
+        if (r == ERROR_SUCCESS && type == REG_DWORD) return v == 1;
+    }
+    return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_PORTUGUESE;
+}
+
+static void saveLanguageSetting(bool pt) {
+    HKEY k;
+    DWORD v = pt ? 1 : 0;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, REG_KEY, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k, nullptr) ==
+        ERROR_SUCCESS) {
+        RegSetValueExA(k, "Language", 0, REG_DWORD, (const BYTE*)&v, sizeof v);
+        RegCloseKey(k);
+    }
+}
+
+static const char* ONLINE_URL = "https://raw.githubusercontent.com/githurby/Hardware-AI/main/models-online.csv";
+
+// Cached copy of the online list, kept in %APPDATA% so it works without write access to the exe folder.
+static std::string onlineCachePath(bool createDir) {
+    const char* ad = getenv("APPDATA");
+    if (!ad) return std::string();
+    std::string d = std::string(ad) + "\\Hardware-AI";
+    if (createDir) CreateDirectoryA(d.c_str(), nullptr);
+    return d + "\\models-online.csv";
+}
+
+static void updateModelsOnline() {
+    std::string dst = onlineCachePath(true);
+    if (dst.empty()) return;
+    std::string tmp = dst + ".tmp";
+    SetCursor(LoadCursor(nullptr, IDC_WAIT));
+    // The query string defeats proxy/IE caching of the raw file.
+    std::string url = std::string(ONLINE_URL) + "?t=" + std::to_string(GetTickCount());
+    HRESULT hr = URLDownloadToFileA(nullptr, url.c_str(), tmp.c_str(), 0, nullptr);
+    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+    if (FAILED(hr)) {
+        DeleteFileA(tmp.c_str());
+        MessageBoxA(g_hwnd,
+                    tr("Downloading the latest model list failed. Check your internet connection.").c_str(),
+                    "Hardware-AI", MB_ICONWARNING);
+        return;
+    }
+    std::ifstream f(tmp);
+    std::string line;
+    int rows = 0;
+    while (std::getline(f, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        if (line.find('<') != std::string::npos) {  // an HTML error page
+            rows = -1;
+            break;
+        }
+        if (std::count(line.begin(), line.end(), ',') >= 6) ++rows;
+    }
+    f.close();
+    if (rows <= 0) {
+        DeleteFileA(tmp.c_str());
+        MessageBoxA(g_hwnd, tr("The downloaded file is not a valid model list.").c_str(), "Hardware-AI",
+                    MB_ICONWARNING);
+        return;
+    }
+    MoveFileExA(tmp.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING);
+
+    std::string keep = (g_sel >= 0 && g_sel < (int)modelCatalog().size()) ? modelCatalog()[g_sel].name : "";
+    int added = loadCustomModels(dst);
+    g_customAdded += added;
+    g_sel = -1;
+    for (size_t i = 0; i < modelCatalog().size(); ++i)
+        if (keep == modelCatalog()[i].name) g_sel = (int)i;
+    fillCategories();
+    refreshAll();
+    if (added > 0)
+        MessageBoxA(g_hwnd, fmt(tr("Added %d new models from the online list.").c_str(), added).c_str(),
+                    "Hardware-AI", MB_ICONINFORMATION);
+    else
+        MessageBoxA(g_hwnd, tr("Model list is already up to date.").c_str(), "Hardware-AI", MB_ICONINFORMATION);
 }
 
 static void setTheme(HWND h, const wchar_t* name) {
@@ -824,13 +973,23 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 std::string d = exeDir();
                 for (int up = 0; up < 4 && !d.empty(); ++up) {
                     g_customAdded += loadCustomModels(d + "\\models.csv");
+                    g_customAdded += loadCustomModels(d + "\\models-online.csv");
                     size_t k = d.find_last_of("\\/");
                     d = k == std::string::npos ? std::string() : d.substr(0, k);
                 }
             }
+            {
+                std::string cache = onlineCachePath(false);
+                if (!cache.empty()) g_customAdded += loadCustomModels(cache);
+            }
+            setPortuguese(loadLanguageSetting());
             initFont();
             createControls();
             detectAndShow();
+            if (isPortuguese()) {
+                SendMessage(g_lang, BM_SETCHECK, BST_CHECKED, 0);
+                applyLanguage();
+            }
             applyTheme(loadDarkSetting());
             return 0;
         case WM_SIZE:
@@ -841,7 +1000,7 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RECT wa;
             SystemParametersInfo(SPI_GETWORKAREA, 0, &wa, 0);
             mi->ptMinTrackSize.x = std::min<LONG>(S(900) + 20, wa.right - wa.left);
-            mi->ptMinTrackSize.y = std::min<LONG>(S(640) + 40, wa.bottom - wa.top);
+            mi->ptMinTrackSize.y = std::min<LONG>(S(672) + 40, wa.bottom - wa.top);
             return 0;
         }
         case WM_CTLCOLORSTATIC:
@@ -868,13 +1027,19 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     break;
                 case ID_REDETECT: detectAndShow(); break;
                 case ID_BENCH: runBenchmark(); break;
+                case ID_LANG:
+                    setPortuguese(SendMessage(g_lang, BM_GETCHECK, 0, 0) == BST_CHECKED);
+                    saveLanguageSetting(isPortuguese());
+                    applyLanguage();
+                    break;
+                case ID_UPDATE: updateModelsOnline(); break;
                 case ID_SAVEPROF: saveProfile(); break;
                 case ID_LOADPROF: loadProfile(); break;
                 case ID_COPYCMD: copyRunCommand(); break;
                 case ID_ALLGPU:
                     g_spec = specFromDetected();
                     fillInputs();
-                    SetWindowTextA(g_hwText, hardwareText().c_str());
+                    showHw();
                     refreshAll();
                     break;
                 case ID_FAVONLY:
@@ -934,7 +1099,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int show) {
         g_scalePct = MulDiv(100, 10 * dpi, 8 * 96);  // same value initFont() computes
     }
     int ww = std::min<int>(S(940) + 20, wa.right - wa.left);
-    int wh = std::min<int>(S(780) + 40, wa.bottom - wa.top);
+    int wh = std::min<int>(S(812) + 40, wa.bottom - wa.top);
     HWND w = CreateWindowA(wc.lpszClassName, "Hardware-AI - what AI can my PC run?",
                            WS_OVERLAPPEDWINDOW, wa.left + (wa.right - wa.left - ww) / 2,
                            wa.top + (wa.bottom - wa.top - wh) / 2, ww, wh, nullptr,

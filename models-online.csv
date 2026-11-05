@@ -1,0 +1,17 @@
+# Online model list. Fetched by the "Update models online" button.
+# Columns: name,category,kind,paramsB,activeB,fixedGB,cpuOk   (kind = llm|image|video|audio|embed)
+# Sizes are rough estimates. Existing names are skipped, so this file is safe to extend.
+Gemma 3 270M,LLM small (<=4B),llm,0.27,0.27,0,1
+Phi-4 multimodal 5.6B,LLM medium (7-14B),llm,5.6,5.6,0,1
+Llama 3.1 Nemotron Nano 8B,LLM medium (7-14B),llm,8,8,0,1
+Qwen3 Next 80B-A3B (MoE),LLM MoE,llm,80,3,0,1
+GLM-4.6 355B-A32B (MoE),LLM MoE,llm,355,32,0,1
+Mistral Small 3.2 24B,LLM large (24-35B),llm,24,24,0,1
+Qwen3-VL 8B,LLM vision,llm,8,8,0,1
+Qwen3-VL 30B-A3B (MoE),LLM vision,llm,30,3,0,1
+Flux.1 Kontext dev (fp8),Image,image,0,0,17,0
+Stable Diffusion 3.5 Large Turbo,Image,image,0,0,14,0
+Wan 2.2 14B,Video,video,0,0,28,0
+Whisper large-v3-turbo,Audio,audio,0,0,3,1
+Chatterbox TTS 0.5B,Audio,audio,0,0,4,1
+EmbeddingGemma 300M,Embedding,embed,0.3,0.3,1,1

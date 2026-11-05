@@ -38,8 +38,11 @@
 			<Add library="comctl32" />
 			<Add library="comdlg32" />
 			<Add library="dwmapi" />
+			<Add library="urlmon" />
 		</Linker>
 		<Unit filename="src/advisor.cpp" />
+		<Unit filename="src/i18n.cpp" />
+		<Unit filename="src/i18n.h" />
 		<Unit filename="src/advisor.h" />
 		<Unit filename="src/hardware.cpp" />
 		<Unit filename="src/hardware.h" />

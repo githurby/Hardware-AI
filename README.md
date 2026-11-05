@@ -33,3 +33,5 @@ Command line:
 - **Favorites**: double-click a row to star it; "Favorites only" filter (saved in registry).
 - **Copy run command**: llama.cpp `llama-server` command for the selected LLM.
 - **Profiles**: save/load hardware setups as `.hwai` files.
+- **Languages**: English / Português (checkbox in Options; saved, defaults to the Windows UI language). Translates the UI, hardware panel, recommendations and reports.
+- **Update models online**: downloads `models-online.csv` from this repository (cached in `%APPDATA%\Hardware-AI`) and adds new models without reinstalling. A copy next to the exe (or up to 3 folders above) is also loaded at startup.
