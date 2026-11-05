@@ -836,7 +836,7 @@ static void updateModelsOnline() {
     int rows = 0;
     while (std::getline(f, line)) {
         if (line.empty() || line[0] == '#') continue;
-        if (line.find('<') != std::string::npos) {  // an HTML error page
+        if (line[0] == '<') {  // an HTML error page
             rows = -1;
             break;
         }
